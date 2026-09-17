@@ -1,0 +1,11 @@
+# HTTP client for scrapers
+httpx
+
+# PDF text extraction
+pdfplumber
+
+# Database ORM (SQLite now, easy migration to Postgres later)
+sqlalchemy
+
+# Testing
+pytest
