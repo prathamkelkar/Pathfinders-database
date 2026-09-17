@@ -1,0 +1,34 @@
+# Template for manually entering a Layer 3 rule -- undocumented/inferred lender
+# policy with no public source document (CONTEXT.md section 2). Copy this file,
+# fill it in, and run:
+#
+#   python3 -m ingestion.layer3_intake ingestion/layer3_rules/your_file.yaml
+#
+# This inserts candidate_rules (never production_rules directly). Run
+# ingestion/review_candidates.py afterwards to review and promote them.
+#
+# One "source" block = one piece of provenance (e.g. one broker conversation,
+# one forum thread, one internal contact). It can carry several "rules" if
+# that one source told you about multiple related conditions.
+
+sources:
+  - lender: "EXAMPLE_LENDER"           # required -- must match the lender name used elsewhere in the DB
+    parent_entity: null                 # optional -- set if this brand is a white-label of another entity (4h)
+    retrieved_date: "2026-09-18"        # optional -- defaults to today if omitted
+    note: >                             # required -- free text on where this came from and why you trust it
+      Describe your source here: who told you this, in what context, how
+      confident you are, and any corroborating detail (e.g. a modelled example
+      showing the effect in practice). This is the provenance record -- write
+      enough that someone reviewing this in a year understands why it's here.
+
+    rules:
+      - debt_type: "EXAMPLE_DEBT_TYPE"        # required, e.g. "HECS_HELP", "personal_loan"
+        rule_description: >                    # required -- plain-English restatement of the rule
+          Describe in plain English what this rule actually says.
+        conditions:                            # required (can be {}) -- when the rule applies
+          example_condition_key: 1
+        effect:                                # required (can be {}) -- what happens when conditions are met
+          example_effect_key: "example_value"
+        confidence: "single_anecdotal_source"  # required -- "single_anecdotal_source" or "corroborated_broker_source" (4f)
+        effective_from: null                    # optional -- defaults to retrieved_date
+        effective_to: null                      # optional

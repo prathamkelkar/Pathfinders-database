@@ -66,14 +66,22 @@ class Source(Base):
 
     source_tier: Mapped[str] = mapped_column(Enum(*SOURCE_TIERS, name="source_tier"), nullable=False)
 
-    url: Mapped[str] = mapped_column(String, nullable=False)
+    # Nullable: Layer 3 (broker-sourced) rules have no public document to link to --
+    # that's the defining feature of that layer (CONTEXT.md section 2). For those,
+    # raw_content holds the human-written provenance note instead.
+    url: Mapped[str | None] = mapped_column(String, nullable=True)
     retrieved_date: Mapped[date] = mapped_column(Date, nullable=False)
 
     # Pointer to the cached raw file under /sources/, not the content itself (4a).
     raw_file_path: Mapped[str | None] = mapped_column(String, nullable=True)
 
-    # Optional inline copy of raw text for small/simple sources (e.g. a short webpage).
+    # Optional inline copy of raw text for small/simple sources (e.g. a short webpage),
+    # or extracted text from raw_file_path for larger documents (e.g. a PDF).
     raw_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # sha256 of the raw file bytes -- lets a scheduled re-scrape detect whether the
+    # underlying document actually changed before re-extracting (4a).
+    content_hash: Mapped[str | None] = mapped_column(String, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -107,6 +115,11 @@ class RuleFieldsMixin:
     debt_type: Mapped[str] = mapped_column(String, nullable=False)
     conditions: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     effect: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+    # Human-readable plain-English restatement of the rule. Mainly useful for
+    # manually-authored Layer 3 entries, where conditions/effect alone may not be
+    # self-explanatory to a future reader the way an LLM-extracted clause is.
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # --- Source authority (4c) ---
     source_tier: Mapped[str] = mapped_column(Enum(*SOURCE_TIERS, name="rule_source_tier"), nullable=False)

@@ -1,0 +1,46 @@
+# CONTEXT.md section 2 -- the validated reference case. CBA's HECS-HELP
+# serviceability treatment is not published in any of its public T&Cs/PDS
+# documents (confirmed by extraction against the real CBA documents in
+# ingestion/scrapers/cba.py -- see ingestion/source_inventory.md). It's
+# undocumented lender policy, known only through broker reporting.
+
+sources:
+  - lender: "CBA"
+    parent_entity: null
+    retrieved_date: "2026-09-18"
+    note: >
+      Broker-sourced knowledge of CBA's undocumented HECS-HELP serviceability
+      treatment, not published in any CBA consumer document. Reported by a
+      mortgage broker who modelled a client's borrowing capacity: making a
+      $4,000 voluntary HECS repayment to cross the 5-year-remaining threshold
+      increased the client's borrowing capacity from $490,000 to $600,000 --
+      a $110k swing from this one piece of niche policy knowledge. Corroborated
+      via multiple broker/industry reports of CBA's HECS treatment (e.g.
+      savings.com.au and The Adviser coverage of CBA easing HECS-HELP
+      restrictions -- see ingestion/source_inventory.md), so treated as
+      corroborated_broker_source rather than single_anecdotal_source.
+
+    rules:
+      - debt_type: "HECS_HELP"
+        rule_description: >
+          HECS-HELP debt with under 1 year remaining until payoff is excluded
+          entirely from CBA's borrowing capacity / serviceability calculation.
+        conditions:
+          years_remaining_max: 1
+        effect:
+          treatment: "excluded_from_serviceability"
+        confidence: "corroborated_broker_source"
+
+      - debt_type: "HECS_HELP"
+        rule_description: >
+          HECS-HELP debt with 1 to 5 years remaining gets a reduced
+          serviceability buffer -- CBA's standard 3% buffer is reduced to 1%
+          for the portion of debt payable within that window.
+        conditions:
+          years_remaining_min: 1
+          years_remaining_max: 5
+        effect:
+          treatment: "reduced_buffer"
+          default_buffer_pct: 3.0
+          buffer_pct: 1.0
+        confidence: "corroborated_broker_source"

@@ -7,5 +7,14 @@ pdfplumber
 # Database ORM (SQLite now, easy migration to Postgres later)
 sqlalchemy
 
+# LLM client -- used against NVIDIA's OpenAI-compatible API endpoint
+openai
+
+# Loads NVIDIA_API_KEY from .env
+python-dotenv
+
+# Manual Layer 3 intake files
+pyyaml
+
 # Testing
 pytest
