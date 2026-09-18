@@ -14,7 +14,13 @@
 sources:
   - lender: "EXAMPLE_LENDER"           # required -- must match the lender name used elsewhere in the DB
     parent_entity: null                 # optional -- set if this brand is a white-label of another entity (4h)
-    retrieved_date: "2026-09-18"        # optional -- defaults to today if omitted
+    retrieved_date: "2026-09-18"        # optional -- defaults to today if omitted (use the SOURCE's own
+                                         # publish date if known, e.g. a blog post's dated byline)
+    url: null                           # optional -- set when the lead has a real public URL (e.g. a
+                                         # brokerage blog post). Left null for word-of-mouth/interview leads.
+    source_type: null                   # optional -- one of CONTEXT.md 9b's categories:
+                                         # regulator_guidance, broker_content_marketing, trade_press,
+                                         # broker_social, comparison_site, calculator_probing, broker_interview
     note: >                             # required -- free text on where this came from and why you trust it
       Describe your source here: who told you this, in what context, how
       confident you are, and any corroborating detail (e.g. a modelled example

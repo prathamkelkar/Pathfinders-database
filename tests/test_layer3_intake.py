@@ -56,6 +56,75 @@ def test_intake_creates_broker_sourced_source_with_no_url(session, tmp_path):
     assert source.retrieved_date == date(2026, 9, 18)
 
 
+def test_intake_sets_needs_corroboration_by_default(session, tmp_path):
+    path = write_yaml(
+        tmp_path,
+        {
+            "sources": [
+                {
+                    "lender": "CBA",
+                    "note": "note",
+                    "rules": [
+                        {
+                            "debt_type": "HECS_HELP",
+                            "conditions": {},
+                            "effect": {},
+                            "confidence": "single_anecdotal_source",
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+    inserted = load_layer3_file(session, path)
+    assert inserted[0].verification_status == "needs_corroboration"
+
+
+def test_intake_records_source_type_and_url_in_note(session, tmp_path):
+    path = write_yaml(
+        tmp_path,
+        {
+            "sources": [
+                {
+                    "lender": "CBA",
+                    "url": "https://example.com/broker-blog-post",
+                    "source_type": "broker_content_marketing",
+                    "note": "Blog post claim.",
+                    "rules": [
+                        {"debt_type": "HECS_HELP", "conditions": {}, "effect": {}, "confidence": "single_anecdotal_source"}
+                    ],
+                }
+            ]
+        },
+    )
+    inserted = load_layer3_file(session, path)
+    source = inserted[0].source
+    assert source.url == "https://example.com/broker-blog-post"
+    assert "source_type=broker_content_marketing" in source.raw_content
+    assert "https://example.com/broker-blog-post" in source.raw_content
+    assert "Blog post claim." in source.raw_content
+
+
+def test_intake_rejects_invalid_source_type(session, tmp_path):
+    path = write_yaml(
+        tmp_path,
+        {
+            "sources": [
+                {
+                    "lender": "CBA",
+                    "source_type": "made_up_category",
+                    "note": "note",
+                    "rules": [
+                        {"debt_type": "HECS_HELP", "conditions": {}, "effect": {}, "confidence": "single_anecdotal_source"}
+                    ],
+                }
+            ]
+        },
+    )
+    with pytest.raises(ValueError, match="source_type must be one of"):
+        load_layer3_file(session, path)
+
+
 def test_intake_inserts_candidate_rules_not_production_rules(session, tmp_path):
     path = write_yaml(
         tmp_path,

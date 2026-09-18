@@ -17,7 +17,7 @@ from pathlib import Path
 import yaml
 from sqlalchemy.orm import Session
 
-from db.models import CandidateRule, Source
+from db.models import LAYER3_SOURCE_TYPES, CandidateRule, Source
 from db.session import get_session
 
 VALID_CONFIDENCE = {"single_anecdotal_source", "corroborated_broker_source"}
@@ -40,13 +40,29 @@ def load_layer3_file(session: Session, path: Path) -> list[CandidateRule]:
         note = source_block["note"]
         retrieved_date = _parse_date(source_block.get("retrieved_date")) or date.today()
 
+        # Optional: tags the lead with one of CONTEXT.md 9b's evidence categories.
+        # CorroboratingSource (db/models.py) only links to already-PROMOTED
+        # production_rules -- candidates have no structured place for this yet --
+        # so it's recorded here in raw_content for auditability rather than left
+        # off entirely. A public brokerage blog/article is "broker_content_marketing"
+        # (9b category 1); an unverified forum/social post is "broker_social" (9b.3).
+        source_type = source_block.get("source_type")
+        if source_type is not None and source_type not in LAYER3_SOURCE_TYPES:
+            raise ValueError(f"source_type must be one of {LAYER3_SOURCE_TYPES}, got {source_type!r}")
+        url = source_block.get("url")
+        note_with_provenance = note
+        if source_type is not None or url is not None:
+            tag_line = f"[source_type={source_type or 'unknown'}" + (f" url={url}" if url else "") + "]\n"
+            note_with_provenance = tag_line + note
+
         source = Source(
             entity_name=lender,
             parent_entity=source_block.get("parent_entity"),
             source_tier="broker_sourced",
-            url=None,  # no public document exists for Layer 3 rules -- that IS the point
+            url=url,  # usually None -- Layer 3 rules typically have no public document --
+            # but a brokerage blog post IS itself a public, linkable URL, so allow one here.
             retrieved_date=retrieved_date,
-            raw_content=note,
+            raw_content=note_with_provenance,
         )
         session.add(source)
         session.flush()
@@ -71,6 +87,10 @@ def load_layer3_file(session: Session, path: Path) -> list[CandidateRule]:
                 confidence=confidence,
                 conflicting_sources=False,
                 extraction_prompt_version=None,  # manually authored, not LLM-extracted
+                # CONTEXT.md 9c: every broker_sourced candidate starts unverified,
+                # visible from intake, not just once promoted -- same default
+                # review_candidates.py's promote() applies at promotion time.
+                verification_status="needs_corroboration",
                 source_id=source.id,
             )
             session.add(candidate)

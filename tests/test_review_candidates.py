@@ -80,6 +80,16 @@ def test_approve_promotes_with_source_retrieved_date_as_effective_from(session, 
     assert candidate.promoted_to_production_rule_id == promoted.id
 
 
+def test_promote_carries_plausibility_check_across_unchanged(session, source):
+    fake_check = {"plausible": True, "claimed_swing_pct": 22.4, "expected_swing_pct": 20.9, "explanation": "..."}
+    candidate = make_candidate(session, source, plausibility_check=fake_check)
+
+    run_review(session, input_func=lambda prompt: "y")
+
+    promoted = session.scalars(select(ProductionRule)).one()
+    assert promoted.plausibility_check == fake_check
+
+
 def test_skip_does_not_promote(session, source):
     candidate = make_candidate(session, source)
 

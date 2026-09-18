@@ -6,6 +6,8 @@ Layer summary (see CONTEXT.md section 4):
 - RuleFieldsMixin: shared columns for candidate/production rules (4c, 4d, 4e, 4f, 4h, 4i).
 - CandidateRule / ProductionRule: same shape, physically separate tables (section 6) —
   extraction writes to CandidateRule, a human promotes rows into ProductionRule.
+- CorroboratingSource: Layer 3 corroboration gate for broker_sourced production
+  rules (9c) -- see ingestion/layer3_verification.py.
 - Rate: decoupled from rules, its own refresh cadence (4b).
 """
 
@@ -44,6 +46,28 @@ LEGISLATION_STATUSES = (
     "introduced_to_parliament",
     "enacted",
     "in_force",
+)
+
+# CONTEXT.md 9c: Layer 3 (broker_sourced) rules start here and can only move to
+# "corroborated" (2nd independent source linked) or "directly_confirmed" (a broker
+# confirmed the specific candidate) via ingestion/layer3_verification.py -- never
+# by being set directly at insert/promotion time.
+VERIFICATION_STATUSES = (
+    "needs_corroboration",
+    "corroborated",
+    "directly_confirmed",
+)
+
+# CONTEXT.md 9b's yield-ranked categories of Layer 3 evidence, used to judge whether
+# two corroborating sources for the same rule are actually independent of each other.
+LAYER3_SOURCE_TYPES = (
+    "regulator_guidance",
+    "broker_content_marketing",
+    "trade_press",
+    "broker_social",
+    "comparison_site",
+    "calculator_probing",
+    "broker_interview",
 )
 
 
@@ -143,6 +167,31 @@ class RuleFieldsMixin:
     # --- Extraction versioning (4i) ---
     extraction_prompt_version: Mapped[str | None] = mapped_column(String, nullable=True)
 
+    # --- Layer 3 corroboration gate (9c) -- nullable because this mainly applies to
+    # source_tier="broker_sourced" rules (statute/regulation/lender_official rules
+    # normally have their own document as sufficient provenance and skip this gate).
+    # Exception: calculator-probe candidates (9b.5) are source_tier="lender_official"
+    # -- it's the lender's own tool -- but the INFERRED rule behind the numbers is
+    # still just as speculative as a broker tip, so they go through this gate too
+    # (see ingestion/calculator_probe_intake.py).
+    verification_status: Mapped[str | None] = mapped_column(
+        Enum(*VERIFICATION_STATUSES, name="verification_status"), nullable=True
+    )
+
+    # Which CONTEXT.md 9b evidence category this candidate came from, when it isn't
+    # a plain scraped/extracted document (e.g. "calculator_probing", "broker_social").
+    # Nullable -- ordinary Layer 1/2 extraction leaves this unset.
+    source_type: Mapped[str | None] = mapped_column(
+        Enum(*LAYER3_SOURCE_TYPES, name="candidate_source_type"), nullable=True
+    )
+
+    # --- Arithmetic plausibility check (9d) -- a SUPPORTING SIGNAL ONLY, never a
+    # gate. Stores ingestion.layer3_plausibility.PlausibilityCheckResult.to_dict()
+    # when a claimed numeric scenario (e.g. the CBA $490k->$600k example) has been
+    # checked, for a human reviewer to see. Null when no scenario was ever checked
+    # -- absence means "not assessed", not "assessed as fine".
+    plausibility_check: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
@@ -159,6 +208,10 @@ class CandidateRule(RuleFieldsMixin, Base):
         ForeignKey("production_rules.id"), nullable=True
     )
 
+    corroborating_sources: Mapped[list["CorroboratingSource"]] = relationship(
+        back_populates="candidate_rule", cascade="all, delete-orphan"
+    )
+
 
 class ProductionRule(RuleFieldsMixin, Base):
     """Human-reviewed, authoritative rules. This is what the read-only query interface hits (4a, section 7)."""
@@ -173,6 +226,57 @@ class ProductionRule(RuleFieldsMixin, Base):
     promoted_from_candidate_rule_id: Mapped[int | None] = mapped_column(
         ForeignKey("candidate_rules.id"), nullable=True
     )
+
+    corroborating_sources: Mapped[list["CorroboratingSource"]] = relationship(
+        back_populates="production_rule", cascade="all, delete-orphan"
+    )
+
+
+class CorroboratingSource(Base):
+    """
+    One piece of evidence for a Layer 3 (broker_sourced, or lender_official via
+    calculator-probing -- 9b.5) rule -- CONTEXT.md 9c. This includes the ORIGINAL
+    lead that justified the rule in the first place, not just subsequent
+    corroboration: verification_status is derived from the full list of entries
+    here, via ingestion/layer3_verification.compute_verification_status().
+
+    Links to EITHER a CandidateRule or a ProductionRule, never both -- most
+    corroboration work happens pre-promotion (a human finds a second source
+    before ever promoting the candidate), but a rule already promoted can still
+    gain corroboration later too.
+    """
+
+    __tablename__ = "corroborating_sources"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    candidate_rule_id: Mapped[int | None] = mapped_column(ForeignKey("candidate_rules.id"), nullable=True)
+    candidate_rule: Mapped["CandidateRule"] = relationship(back_populates="corroborating_sources")
+
+    production_rule_id: Mapped[int | None] = mapped_column(ForeignKey("production_rules.id"), nullable=True)
+    production_rule: Mapped["ProductionRule"] = relationship(back_populates="corroborating_sources")
+
+    source_type: Mapped[str] = mapped_column(Enum(*LAYER3_SOURCE_TYPES, name="layer3_source_type"), nullable=False)
+
+    # Different sourcing channels carry different evidence -- a URL for a blog post
+    # or comparison-site article, nothing for a verbal broker interview, etc.
+    url_or_reference: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # Distinguishes "different broker" corroboration (9c) from "same broker, posted
+    # twice" -- null when the broker's identity genuinely isn't known/trackable.
+    broker_identifier: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # Date of the evidence itself (when the broker posted/said it), not when we found
+    # it -- this is what 9d's recency check re-verifies against.
+    date: Mapped[date] = mapped_column(Date, nullable=False)
+
+    # True only when a broker has directly confirmed THIS SPECIFIC candidate rule
+    # when asked -- the strongest tier (9c), overrides plain corroboration.
+    is_direct_confirmation: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class Rate(Base):

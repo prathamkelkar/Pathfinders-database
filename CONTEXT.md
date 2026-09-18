@@ -95,7 +95,38 @@ Extraction produces `candidate_rules`. A human (the project owner) reviews and p
 - A review script surfaces candidates (including conflicts) for manual promotion.
 - A read-only query interface exists that an agent tool could call against `production_rules` — deterministic, no live fetching.
 
-## 8. Working style expectations
+## 9. Layer 3 verification and corroboration standard
+
+Layer 3 (broker-sourced/undocumented policy) is our highest-value data and our least verifiable data — treat both facts as equally true. A single Reddit post, blog mention, or anecdote is a *lead*, not a fact, no matter how specific or plausible it sounds.
+
+### 9a. Source population
+"Broker" in this project means **mortgage brokers** (also called finance brokers, or credit representatives/credit assistance providers in regulatory language) — the people who submit loan applications to multiple lenders and deal directly with lender credit policy and BDMs. Not property/buyer's agents, who have no visibility into lender serviceability policy. Most operate as authorised credit representatives under an aggregator's ACL (AFG, Connective, Finsure, Loan Market, Aussie).
+
+### 9b. Where Layer 3 leads come from (in rough yield order)
+0. **Regulator guidance, checked first, not last** — for HECS/HELP specifically, APRA published amendments to Prudential Practice Guide APG 223 and Reporting Standard ARS 223.0 (effective 30 September 2025) formally addressing how ADIs may treat HELP debt in serviceability and DTI reporting. This is `regulator_guidance` tier — higher authority than any individual lender's tacit policy — and generalizes the *pattern* behind the CBA example across the industry. It sets what's *permitted*, not each lender's specific chosen thresholds — those still need lender-specific sourcing, but now anchored to a documented framework rather than discovered from scratch. Before chasing any category of tacit lender policy, check whether an equivalent regulator (APRA, ASIC) guidance document already exists.
+1. Broker/brokerage content marketing — SEO blog posts on brokerage firm websites (e.g. "does HECS debt affect your borrowing power"), which are public, scrapable, and often name specific lenders and rules. Confirmed genuinely findable at useful specificity, not just theoretical — e.g. named-broker figures with real dollar comparisons.
+2. Trade press — Mortgage Business, The Adviser, Broker News.
+3. Broker Facebook groups and LinkedIn — manual mining, same pattern as the original Reddit find.
+4. Comparison/consumer-finance sites — Canstar, Mozo, InfoChoice explainer articles.
+5. **Calculator probing** — where a lender's public borrowing-power calculator accepts HECS/HELP as a distinct input, systematically varying that input while holding other variables constant produces first-party empirical evidence of that lender's actual policy, sourced from the lender's own tool rather than secondhand description. Stronger evidence than an anecdote where it's available; not every lender's calculator supports this.
+6. Direct broker interviews — highest-yield and the only channel that produces *original* corroboration rather than re-aggregating what a scraper could eventually find too.
+
+### 9c. Promotion gate — no rule reaches usable status on a single source
+A candidate Layer 3 rule may never be promoted to a status the product will use to generate a specific dollar-figure recommendation while it has only one source. It must clear one of:
+- **Corroboration**: a second, independent source (different broker, different platform/source-type, ideally different date) describing the same rule, or
+- **Direct confirmation**: a broker directly confirms the specific candidate rule when asked (this is the strongest tier, and worth actively pursuing for existing single-source candidates, not just new leads).
+
+Until then, a rule sits in a `needs_corroboration` status. Rules in this status may be surfaced to a user only as something like "unverified insight — worth confirming with a broker," never as a specific quantified recommendation.
+
+### 9d. Additional verification signals to weigh, not gate on alone
+- Platform verification: e.g. r/AskAnAussieBroker enforces flair/mod approval for verified brokers — an unverified account posting is weaker evidence than a flaired one.
+- Recency: tag every corroborating source with its date. A rule unconfirmed in the last 6–12 months should be treated as needing re-verification, not permanently settled, since lender policy changes.
+- Arithmetic plausibility: where a claim includes a specific numeric consequence (like the CBA $490k→$600k example), sanity-check it against standard serviceability-calculator assumptions before trusting the claim at face value — a mechanically implausible number is a reason to downgrade confidence even if the source seems credible.
+
+### 9e. Scope discipline for Layer 3 sourcing effort
+Layer 3 sourcing (broker content, interviews, etc.) is worth the effort specifically for **mortgage-serviceability policy** — this is where undocumented lender-specific rules create large, variable dollar swings (the HECS case). Don't spend Layer 3 sourcing effort on credit card/personal loan/BNPL fine print (fees, redraw, penalties) — that data is genuinely public and already covered by Layer 1/2 scraping; broker-sourcing it would be wasted effort chasing something that isn't actually tacit knowledge.
+
+## 10. Working style expectations
 
 - Prefer several small, independently testable modules over one large pipeline.
 - Write tests before or alongside implementation wherever the task says to, especially for schema and extraction work — the CBA fixture should appear in the test suite early and stay there.

@@ -1,0 +1,50 @@
+# Broker/comparison-site content on Pepper Money's serviceability treatment,
+# found via targeted research (Task P2.4). HECS/HELP (a) and rental income
+# shading (d) were searched but no lender-named specific claim survived
+# verification -- an AI-search-synthesized "Pepper includes up to 80% of
+# rental income" claim could not be traced to any actual page on direct fetch
+# and is deliberately NOT recorded here (see the task summary report).
+
+sources:
+  - lender: "Pepper Money"
+    url: "https://www.huntergalloway.com.au/pepper-home-loans-review-for-australian-homebuyers/"
+    source_type: "broker_content_marketing"
+    retrieved_date: "2026-09-18"
+    note: >
+      Hunter Galloway, "Pepper Home Loans Review for Australian Homebuyers"
+      (updated 2026-09-11). Both rules below come from this same review page.
+    rules:
+      - debt_type: "home_loan"
+        rule_description: >
+          Pepper's Alt-Doc product has tiered ABN-history minimums: Prime/Near
+          Prime Clear (clear credit) requires 12 months ABN; Prime/Near Prime
+          (without clear credit) requires 24 months ABN; Specialist requires 6
+          months ABN/GST; Specialist PLUS requires 12 months ABN. An
+          accountant's letter is not accepted if the ABN is under 12 months old,
+          or for Specialist PLUS at all.
+        conditions:
+          borrower_type: "self_employed"
+          product: "Alt-Doc"
+        effect:
+          tier_minimum_abn_months:
+            prime_near_prime_clear: 12
+            prime_near_prime: 24
+            specialist: 6
+            specialist_plus: 12
+          accountants_letter_accepted: "not if ABN <12 months old, or for Specialist PLUS"
+        confidence: "single_anecdotal_source"
+      - debt_type: "home_loan"
+        rule_description: >
+          For casual employment or second-job income: Prime and Specialist
+          PLUS require 12 months with the current employer. Near Prime Clear,
+          Near Prime, and Specialist require only 6 months with the current
+          employer plus 18 months in the industry. This page does not address
+          "probation" separately, only casual/second-job tenure.
+        conditions:
+          employment_type: "casual_or_second_job"
+        effect:
+          tier_minimum_months_current_employer:
+            prime_and_specialist_plus: 12
+            near_prime_clear_near_prime_specialist: 6
+          near_prime_specialist_industry_minimum_months: 18
+        confidence: "single_anecdotal_source"

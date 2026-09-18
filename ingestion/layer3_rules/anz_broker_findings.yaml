@@ -1,0 +1,91 @@
+# Broker/comparison-site content on ANZ's serviceability treatment, found via
+# targeted research (Task P2.4). NOTE: ANZ's HECS/HELP treatment (topic a) was
+# an explicit, confirmed NON-FINDING across multiple sources -- "ANZ silence"
+# is itself a real, reportable data point (see the task summary table), not
+# something to encode as a rule here, since there's no actual policy content
+# to record.
+
+sources:
+  - lender: "ANZ"
+    url: "https://www.theadviser.com.au/lender/47421-anz-updates-lending-policy-for-self-employed-borrowers"
+    source_type: "trade_press"
+    retrieved_date: "2026-09-18"
+    note: >
+      The Adviser, "ANZ updates lending policy for self-employed borrowers",
+      corroborated by Yahoo Finance, "ANZ joins Westpac, CBA, NAB in easing
+      home loan rules for self-employed Aussies" (published 2025-08-07):
+      https://au.finance.yahoo.com/news/anz-joins-westpac-cba-nab-in-easing-home-loan-rules-for-self-employed-aussies-cutting-red-tape-022214249.html
+    rules:
+      - debt_type: "home_loan"
+        rule_description: >
+          ANZ was first among the majors to accept one year of financials for
+          self-employed income verification. In September 2024, ANZ extended
+          this to self-employed customers requiring LMI, with one year of
+          financials accepted but a 20% shading applied to net profit before
+          tax. In 2025, ANZ further allowed one year of documentation for
+          director's fees/company dividends, and began using actual repayments
+          (instead of a 3% buffer) for existing fixed-rate asset finance/leases.
+        conditions:
+          borrower_type: "self_employed"
+        effect:
+          financials_years_required: 1
+          net_profit_shading_pct_for_lmi: 20
+          uses_actual_repayments_for_fixed_rate_leases: true
+          effective_from_note: "September 2024 (LMI extension); 2025 (director's fees/dividends)"
+        confidence: "single_anecdotal_source"
+
+  - lender: "ANZ"
+    url: "https://www.huntergalloway.com.au/anz-pre-approval/"
+    source_type: "broker_content_marketing"
+    retrieved_date: "2026-09-18"
+    note: >
+      Moderate confidence -- aggregated broker commentary (Home Loan
+      Experts/AWFS-style) plus a separate statement in Hunter Galloway's ANZ
+      pre-approval page; not independently re-verified via direct fetch of a
+      single clean primary source.
+    rules:
+      - debt_type: "home_loan"
+        rule_description: >
+          ANZ prefers 6-12 months of continuous employment in the same industry
+          for casual workers -- a wider/vaguer band than most majors' flat
+          6-month rule, and references "same industry" rather than "same
+          employer". For probation on permanent roles, ANZ generally wants 3
+          months in the current permanent job; probation itself is not an
+          automatic disqualifier.
+        conditions:
+          employment_type: "casual_or_probationary"
+        effect:
+          casual_minimum_months_range: "6-12"
+          casual_requirement_type: "same industry (not necessarily same employer)"
+          probation_minimum_months: 3
+          probation_is_automatic_disqualifier: false
+        confidence: "single_anecdotal_source"
+
+  - lender: "ANZ"
+    url: "https://www.theadviser.com.au/lender/34156-anz-tightens-lending-criteria"
+    source_type: "trade_press"
+    retrieved_date: "2026-09-18"
+    note: >
+      The Adviser, "ANZ tightens lending criteria" -- directly confirmed via
+      fetch: "A change to rental shading from 80 per cent to 75 per cent when
+      calculating serviceability has also been implemented." IMPORTANT CAVEAT:
+      the article's own displayed publish date is 2016-04-01 (effective
+      2016-04-04) -- much older than initially expected. No fresher primary
+      source was found confirming whether this figure is still current as of
+      2026. Recorded with its real, old effective_from date rather than
+      backdating it to look current -- CONTEXT.md 9d's recency concern applies
+      directly here; this needs re-verification before being trusted as
+      ANZ's current policy.
+    rules:
+      - debt_type: "home_loan"
+        rule_description: >
+          ANZ changed its rental income shading from 80% to 75% (i.e. counting
+          75% of rental income) when calculating serviceability. Confirmed via
+          direct quote from a 2016 article -- currency as of 2026 is NOT
+          confirmed; a decade has passed without a found update either way.
+        conditions:
+          income_type: "rental"
+        effect:
+          rental_income_recognised_pct: 75
+        confidence: "single_anecdotal_source"
+        effective_from: "2016-04-04"

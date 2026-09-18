@@ -5,7 +5,9 @@ LLM to identify only rules the document explicitly states. Never writes to
 """
 
 import json
+import logging
 import os
+import time
 from datetime import date, datetime
 
 from dotenv import load_dotenv
@@ -14,7 +16,26 @@ from sqlalchemy.orm import Session
 
 from db.models import CandidateRule, Source
 
+logger = logging.getLogger("ingestion.extraction")
+
 EXTRACTION_PROMPT_VERSION = "1"
+
+# About a third of real documents were observed hitting malformed/unparseable
+# JSON from the model on a given attempt (not a property of the input -- an
+# identical retry with the same input has recovered every time this was
+# checked manually). MAX_EXTRACTION_ATTEMPTS = 1 initial attempt + 2 retries.
+MAX_EXTRACTION_ATTEMPTS = 3
+RETRY_DELAY_SECONDS = 1.0
+
+
+class ExtractionFailedError(RuntimeError):
+    """
+    Raised when the LLM never returned parseable JSON after MAX_EXTRACTION_ATTEMPTS
+    tries. Deliberately a distinct exception type from a clean empty-array result --
+    callers need to be able to tell "this document genuinely had nothing extractable"
+    (extract_candidates returns []) apart from "the model failed to respond usably"
+    (this is raised) rather than conflating both into "0 candidates".
+    """
 
 NVIDIA_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
 NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
@@ -129,8 +150,31 @@ def extract_candidates(
     if not source.raw_content:
         raise ValueError(f"source {source.id} has no raw_content to extract from")
 
-    raw_response = llm_call(source.entity_name, source.raw_content)
-    items = _parse_json_array(raw_response)
+    items = None
+    last_error: Exception | None = None
+    for attempt in range(1, MAX_EXTRACTION_ATTEMPTS + 1):
+        raw_response = llm_call(source.entity_name, source.raw_content)
+        try:
+            items = _parse_json_array(raw_response)
+            break
+        except (ValueError, json.JSONDecodeError) as e:
+            last_error = e
+            logger.warning(
+                "RETRY attempt=%d/%d entity=%s source_id=%s -- unparseable response: %s: %s",
+                attempt, MAX_EXTRACTION_ATTEMPTS, source.entity_name, source.id, type(e).__name__, e,
+            )
+            if attempt < MAX_EXTRACTION_ATTEMPTS:
+                time.sleep(RETRY_DELAY_SECONDS)
+
+    if items is None:
+        logger.error(
+            "EXTRACTION_FAILED_AFTER_RETRIES entity=%s source_id=%s attempts=%d -- %s: %s",
+            source.entity_name, source.id, MAX_EXTRACTION_ATTEMPTS, type(last_error).__name__, last_error,
+        )
+        raise ExtractionFailedError(
+            f"Extraction failed after {MAX_EXTRACTION_ATTEMPTS} attempts for source id={source.id} "
+            f"(entity={source.entity_name!r}): {type(last_error).__name__}: {last_error}"
+        ) from last_error
 
     confidence = CONFIDENCE_BY_SOURCE_TIER[source.source_tier]
 

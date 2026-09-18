@@ -1,0 +1,70 @@
+# Broker/comparison-site content on Firstmac's serviceability treatment,
+# found via targeted research (Task P2.4). HECS/HELP (a) was searched but no
+# lender-named specific claim was found -- consistent with APRA's guidance
+# being ADI-specific and Firstmac not being an ADI (see task summary report).
+
+sources:
+  - lender: "Firstmac"
+    url: "https://www.huntergalloway.com.au/firstmac-home-loan-review/"
+    source_type: "broker_content_marketing"
+    retrieved_date: "2026-09-18"
+    note: >
+      Hunter Galloway, "Firstmac Home Loan Review" (updated 2026-09-11). Both
+      rules below come from this same review page.
+    rules:
+      - debt_type: "home_loan"
+        rule_description: >
+          Firstmac's self-employed income addback treatment is more
+          conservative than some competitors: it does NOT simply add back full
+          company net profit. Depreciation addbacks are capped at 20% of net
+          profit before tax.
+        conditions:
+          borrower_type: "self_employed"
+        effect:
+          depreciation_addback_cap_pct_of_net_profit: 20
+          adds_back_full_net_profit: false
+        confidence: "single_anecdotal_source"
+      - debt_type: "home_loan"
+        rule_description: >
+          Firstmac recognises 80% of gross rent for standard residential rental
+          income, but only 65% of gross rent for short-stay/Airbnb rental
+          income -- a distinct, lower figure for short-stay lettings.
+        conditions:
+          income_type: "rental"
+        effect:
+          standard_rental_recognised_pct: 80
+          short_stay_airbnb_recognised_pct: 65
+        confidence: "single_anecdotal_source"
+
+  - lender: "Firstmac"
+    url: "https://www.readkong.com/page/firstmac-residential-lending-policy-lending-policy-6820018"
+    source_type: "broker_content_marketing"
+    retrieved_date: "2026-09-18"
+    note: >
+      WEAK SOURCING, flagged explicitly: a third-party document-hosting/mirror
+      site (readkong.com) reproducing what claims to be Firstmac's own
+      "Residential Lending Policy", dated February 2021. This exact document
+      was already flagged as unreliable in the Task 3 source inventory
+      (third-party-mirrored, not confirmed current, no HECS clause) -- treated
+      as Layer 3 rather than Layer 1/2 precisely BECAUSE we could not obtain a
+      reliably current, officially-hosted copy from Firstmac directly.
+      Currency as of 2026 is NOT confirmed; this is nearly 5 years old.
+    rules:
+      - debt_type: "home_loan"
+        rule_description: >
+          Casual employment: minimum 12 months with current employer; OR
+          minimum 6 months with current employer provided minimum 12 months
+          continuous in the same occupation/industry. Probation: an
+          application may be considered if the borrower has 12 months
+          continuous employment in the same occupation type and industry
+          (i.e. the new employer's probation period doesn't reset the clock if
+          occupation/industry continuity is otherwise established).
+        conditions:
+          employment_type: "casual_or_probationary"
+        effect:
+          casual_minimum_months_current_employer: 12
+          casual_alt_minimum_months_current_employer: 6
+          casual_alt_requires_months_same_occupation_industry: 12
+          probation_requires_months_continuous_same_occupation_industry: 12
+        confidence: "single_anecdotal_source"
+        effective_from: "2021-02-01"

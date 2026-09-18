@@ -1,0 +1,34 @@
+# Broker/comparison-site content on Liberty Financial's serviceability
+# treatment, found via targeted research (Task P2.4). HECS/HELP (a) was
+# searched specifically (checking Liberty's own lender-review pages on Hunter
+# Galloway and Home Loan Experts directly) and genuinely not found anywhere --
+# unlike CBA/NAB/Westpac, no HECS-exclusion coverage names Liberty at all.
+# Casual/probationary employment (c) and rental income shading (d) were also
+# searched with no lender-named specific figure found.
+
+sources:
+  - lender: "Liberty Financial"
+    url: "https://www.huntergalloway.com.au/liberty-financial-home-loan-review/"
+    source_type: "broker_content_marketing"
+    retrieved_date: "2026-09-18"
+    note: >
+      Hunter Galloway, "Liberty Financial Home Loan Review (Updated 2026)" --
+      no explicit publish date shown on page beyond the "Updated 2026" title.
+      Liberty's own low-doc page (liberty.com.au/home-loans/low-doc-home-loans)
+      confirms BAS/accountant's-declaration alternative verification and ~85%
+      max LVR for low-doc, but without this specific tenure split -- the 1yr/2yr
+      figure below is Hunter Galloway's own reporting, not Liberty's own site.
+    rules:
+      - debt_type: "home_loan"
+        rule_description: >
+          Liberty's "Standard/custom low-doc" tier requires at least 1 year
+          working for yourself; "Prime self-employed" generally requires 2
+          years, though a shorter trading history may be considered with
+          accepted income evidence and the right property/deposit.
+        conditions:
+          borrower_type: "self_employed"
+        effect:
+          standard_custom_low_doc_minimum_years: 1
+          prime_self_employed_minimum_years: 2
+          shorter_history_possible: "with accepted income evidence and sufficient property/deposit"
+        confidence: "single_anecdotal_source"

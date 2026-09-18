@@ -78,11 +78,20 @@ def compute_content_hash(content: bytes) -> str:
 
 
 def extract_text(content: bytes, url: str) -> str:
-    """Extract plain text from a fetched document. Dispatches on file extension."""
-    if urlparse(url).path.lower().endswith(".pdf"):
+    """
+    Extract plain text from a fetched document. Dispatches on the actual content
+    bytes (sniffing the PDF magic number), not the URL shape -- some sources
+    (e.g. the Federal Register of Legislation's .../pdf/1 URLs) serve PDFs at
+    URLs with no .pdf suffix, which a URL-based check would silently misread as
+    HTML/text and corrupt into binary garbage.
+    """
+    if content[:5] == b"%PDF-":
         with pdfplumber.open(io.BytesIO(content)) as pdf:
             return "\n".join(page.extract_text() or "" for page in pdf.pages)
     text = content.decode("utf-8", errors="replace")
+    # Strip script/style *content*, not just the tags -- otherwise inline JS/CSS
+    # (which can be hundreds of KB on a modern site) leaks through as "text".
+    text = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", text, flags=re.DOTALL | re.IGNORECASE)
     text = re.sub(r"<[^>]+>", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 

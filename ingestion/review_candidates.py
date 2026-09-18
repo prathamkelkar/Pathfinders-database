@@ -48,6 +48,14 @@ def print_candidate(index: int, total: int, candidate: CandidateRule, conflict: 
     print(f"  effective_from will be set to source.retrieved_date: {source.retrieved_date}")
     print(f"  source:      {source.url} (retrieved {source.retrieved_date})")
     print(f"  extraction_prompt_version: {candidate.extraction_prompt_version}")
+    if candidate.plausibility_check is not None:
+        pc = candidate.plausibility_check
+        print(
+            f"  plausibility check (supporting signal only, does not gate approval): "
+            f"plausible={pc.get('plausible')} claimed={pc.get('claimed_swing_pct')}% "
+            f"expected={pc.get('expected_swing_pct')}%"
+        )
+        print(f"    {pc.get('explanation')}")
     if conflict is not None:
         print(f"  !! CONFLICT with production_rule id={conflict.id} at the same source_tier ({candidate.source_tier}):")
         print(f"     existing effect: {conflict.effect}")
@@ -79,6 +87,21 @@ def promote(session: Session, candidate: CandidateRule, conflict: ProductionRule
         if conflict is not None
         else None,
         extraction_prompt_version=candidate.extraction_prompt_version,
+        # Layer 3 corroboration gate (CONTEXT.md 9c): normally carried through
+        # UNCHANGED from the candidate -- the candidate-intake path
+        # (layer3_intake.py, calculator_probe_intake.py) is what decides whether a
+        # rule starts at needs_corroboration, since lender_official calculator-probe
+        # candidates (9b.5) need this too, not just broker_sourced ones. The `or`
+        # fallback is a safety net for any broker_sourced candidate that reached
+        # promotion without it already set. Promotion never sets this to anything
+        # PAST needs_corroboration -- that requires a separate, explicit call to
+        # ingestion.layer3_verification.add_corroborating_source().
+        verification_status=candidate.verification_status
+        or ("needs_corroboration" if candidate.source_tier == "broker_sourced" else None),
+        source_type=candidate.source_type,
+        # Supporting signal only (9d) -- carried through for the permanent record,
+        # never consulted by promotion logic itself.
+        plausibility_check=candidate.plausibility_check,
         source_id=candidate.source_id,
         promoted_from_candidate_rule_id=candidate.id,
     )

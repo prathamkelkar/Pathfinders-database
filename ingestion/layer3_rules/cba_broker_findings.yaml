@@ -1,0 +1,84 @@
+# Broker/comparison-site content on CBA's serviceability treatment, found via
+# targeted research (Task P2.4). HECS/HELP treatment itself is NOT re-entered
+# here -- it already exists as a real production_rule (ids 1, 2) from
+# cba_hecs_serviceability.yaml, and this research's two sources (The Adviser +
+# Yahoo Finance, both 2025-04-09) were instead registered directly as
+# CorroboratingSource entries against those existing rules via
+# ingestion.layer3_verification.add_corroborating_source(), upgrading them to
+# verification_status=corroborated. Caveat worth flagging: Yahoo Finance's
+# finance desk sometimes syndicates rather than independently reports --
+# treat "corroborated" here as reasonably solid, not airtight independence.
+
+sources:
+  - lender: "CBA"
+    url: "https://www.theadviser.com.au/borrower/42063-cba-streamlines-serviceability-for-self-employed-borrowers"
+    source_type: "trade_press"
+    retrieved_date: "2026-09-18"
+    note: >
+      The Adviser, "CBA streamlines serviceability for self-employed borrowers"
+      (published 2021-09-27, updated 2022-03-09). Corroborated for the one-year-
+      financials figure specifically by Yahoo Finance, "ANZ joins Westpac, CBA,
+      NAB in easing home loan rules for self-employed Aussies" (published
+      2025-08-07): https://au.finance.yahoo.com/news/anz-joins-westpac-cba-nab-in-easing-home-loan-rules-for-self-employed-aussies-cutting-red-tape-022214249.html
+    rules:
+      - debt_type: "home_loan"
+        rule_description: >
+          CBA moved to accept one year of financials (previously two) for
+          self-employed borrowers, effective October 2024, subject to eligibility
+          (business trading history, generally capped at 80% LVR). Separately, CBA
+          "streamlined" self-employed servicing: verifying average investment
+          income over two years, and allowing some self-employed borrowers to be
+          assessed with only 6 months of payslips + an accountant's letter,
+          treated similarly to a PAYG customer without full business financials.
+        conditions:
+          borrower_type: "self_employed"
+        effect:
+          financials_years_required: 1
+          max_lvr_pct: 80
+          alt_path: "6 months payslips + accountant's letter, treated like PAYG"
+          effective_from_note: "October 2024"
+        confidence: "single_anecdotal_source"
+
+  - lender: "CBA"
+    url: "https://www.huntergalloway.com.au/home-loan-casual-employment/"
+    source_type: "broker_content_marketing"
+    retrieved_date: "2026-09-18"
+    note: >
+      Hunter Galloway, "Casual Job Home Loan: How To Get Approved" (aggregated
+      lender-policy table, content last verified 2026-07-31).
+    rules:
+      - debt_type: "home_loan"
+        rule_description: >
+          CBA uses 6 months as the broad starting point for casual employment
+          history, but with a specific caveat: CBA does not count earlier
+          permanent work towards its casual-history alternative (i.e. no
+          blending prior permanent-role tenure into the casual-history test).
+        conditions:
+          employment_type: "casual"
+        effect:
+          minimum_months_current_role: 6
+          blends_prior_permanent_tenure: false
+        confidence: "single_anecdotal_source"
+
+  - lender: "CBA"
+    url: "https://broker.loanmarket.com.au/euroa/about/rental-income-home-loan-servicing-guide/"
+    source_type: "broker_content_marketing"
+    retrieved_date: "2026-09-18"
+    note: >
+      Loan Market broker network, "Can I Use Rental Income for a Home Loan?
+      (2026 Rules)" -- no explicit publish date shown; the 80% figure for
+      CBA/major banks appeared via search synthesis and was not independently
+      re-verified against the raw page text on direct fetch. Weaker sourcing
+      than the other two CBA entries -- flag for extra scrutiny before treating
+      as settled.
+    rules:
+      - debt_type: "home_loan"
+        rule_description: >
+          CBA is commonly cited (as a "major bank" benchmark figure, not a
+          CBA-specific quote) as recognising 80% of rental income (20%
+          shading) in serviceability calculations.
+        conditions:
+          income_type: "rental"
+        effect:
+          rental_income_recognised_pct: 80
+        confidence: "single_anecdotal_source"

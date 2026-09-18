@@ -1,0 +1,98 @@
+# Broker/comparison-site content on Westpac's serviceability treatment, found
+# via targeted research (Task P2.4).
+
+sources:
+  - lender: "Westpac"
+    url: "https://www.huntergalloway.com.au/does-hecs-debt-affect-home-loan/"
+    source_type: "broker_content_marketing"
+    retrieved_date: "2026-09-18"
+    note: >
+      Hunter Galloway, "Does HECS debt affect your home loan?" (content updated
+      2026-09-17). Lender-comparison table attributes this specifically to
+      Westpac and St George together. Moderate confidence -- sourced from one
+      aggregator table, not a primary Westpac announcement (contrast with
+      CBA/NAB's own-source coverage).
+    rules:
+      - debt_type: "HECS_HELP"
+        rule_description: >
+          A HECS-HELP repayment may be excluded from serviceability if the debt
+          is expected to clear within 12 months -- mirrors CBA's threshold.
+          Attributed to Westpac and St George together in this source.
+        conditions:
+          expected_repayment_within_months: 12
+        effect:
+          treatment: "excluded_from_serviceability"
+          also_applies_to: "St George (same corporate group)"
+        confidence: "single_anecdotal_source"
+
+  - lender: "Westpac"
+    url: "https://au.finance.yahoo.com/news/anz-joins-westpac-cba-nab-in-easing-home-loan-rules-for-self-employed-aussies-cutting-red-tape-022214249.html"
+    source_type: "trade_press"
+    retrieved_date: "2026-09-18"
+    note: >
+      Yahoo Finance, "ANZ joins Westpac, CBA, NAB in easing home loan rules for
+      self-employed Aussies" (published 2025-08-07). Bonus-income shading figure
+      separately corroborated via Westpac's own broker policy hub
+      (westpac.com.au/brokers/policy/, no date shown).
+    rules:
+      - debt_type: "home_loan"
+        rule_description: >
+          Westpac introduced a one-year income assessment option (down from the
+          standard two years) effective July 2025. Standing policy: if the most
+          recent year's income is higher than the prior year, Westpac averages
+          the two years; if lower, Westpac uses the lower (latest) figure; if
+          profit growth is <=60% year-on-year, Westpac may use the latest year's
+          income alone. Bonus income shading returned to 80% (from a 60%
+          COVID-era reduction).
+        conditions:
+          borrower_type: "self_employed"
+        effect:
+          financials_years_required: 1
+          effective_from_note: "July 2025"
+          averaging_rule: "average two years if latest is higher; use latest year if lower; use latest alone if growth <=60% YoY"
+          bonus_income_shading_pct: 80
+        confidence: "single_anecdotal_source"
+
+  - lender: "Westpac"
+    url: "https://www.huntergalloway.com.au/home-loan-casual-employment/"
+    source_type: "broker_content_marketing"
+    retrieved_date: "2026-09-18"
+    note: >
+      Hunter Galloway, "Casual Job Home Loan: How To Get Approved" (content last
+      verified 2026-07-31). Same page as the CBA casual-employment entry, but a
+      distinct, differently-worded rule attributed specifically to Westpac/St George.
+    rules:
+      - debt_type: "home_loan"
+        rule_description: >
+          Westpac (with St George) requires 6 months with the SAME employer or
+          agency for casual employment -- a distinct variant from lenders whose
+          6-month rule only requires the same industry, not the same employer.
+        conditions:
+          employment_type: "casual"
+        effect:
+          minimum_months_required: 6
+          requirement_type: "same employer or agency (not just same industry)"
+        confidence: "single_anecdotal_source"
+
+  - lender: "Westpac"
+    url: "https://loanlounge.au/resources/investment-loan-serviceability-increase-august-2026/"
+    source_type: "broker_content_marketing"
+    retrieved_date: "2026-09-18"
+    note: >
+      Loan Lounge, "Investment Loan Serviceability Just Improved for Investors"
+      (dated around 2026-08-17). Well-dated and specific.
+    rules:
+      - debt_type: "home_loan"
+        rule_description: >
+          Effective 17 August 2026, Westpac increased recognised rental income
+          for eligible residential investment properties in "Category 9"
+          postcodes from 90% to 95% (shading cut from 10% to 5%). Other
+          postcode categories remain at 90% or lower.
+        conditions:
+          income_type: "rental"
+          postcode_category: 9
+        effect:
+          rental_income_recognised_pct: 95
+          effective_from_note: "17 August 2026"
+        confidence: "single_anecdotal_source"
+        effective_from: "2026-08-17"

@@ -14,7 +14,12 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from db.models import Base, CandidateRule, Source
-from ingestion.extraction.extract_rules import EXTRACTION_PROMPT_VERSION, extract_candidates
+from ingestion.extraction.extract_rules import (
+    EXTRACTION_PROMPT_VERSION,
+    MAX_EXTRACTION_ATTEMPTS,
+    ExtractionFailedError,
+    extract_candidates,
+)
 
 
 @pytest.fixture()
@@ -139,3 +144,86 @@ def test_extraction_never_invents_the_undocumented_cba_hecs_rule(session, cba_so
         select(CandidateRule).where(CandidateRule.debt_type == "HECS_HELP")
     ).all()
     assert hecs_candidates == []
+
+
+# --- Retry logic ---
+
+
+def test_recovers_on_a_later_attempt_after_malformed_responses(session, cba_source, monkeypatch):
+    """
+    About a third of real documents were observed hitting one malformed/unparseable
+    response before an identical retry succeeded. This simulates exactly that:
+    the first two calls return garbage, the third returns valid JSON.
+    """
+    monkeypatch.setattr("ingestion.extraction.extract_rules.time.sleep", lambda _: None)
+
+    calls = []
+
+    def flaky_llm_call(entity_name, source_text):
+        calls.append(1)
+        if len(calls) < 3:
+            return "this is not json at all"
+        return json.dumps([{"debt_type": "home_loan", "conditions": {}, "effect": {"recovered": True}}])
+
+    candidates = extract_candidates(session, cba_source, llm_call=flaky_llm_call)
+
+    assert len(calls) == 3
+    assert len(candidates) == 1
+    assert candidates[0].effect == {"recovered": True}
+
+
+def test_succeeds_immediately_without_retrying_when_first_response_is_valid(session, cba_source, monkeypatch):
+    monkeypatch.setattr("ingestion.extraction.extract_rules.time.sleep", lambda _: None)
+
+    calls = []
+
+    def fake_llm_call(entity_name, source_text):
+        calls.append(1)
+        return json.dumps([{"debt_type": "home_loan", "conditions": {}, "effect": {}}])
+
+    extract_candidates(session, cba_source, llm_call=fake_llm_call)
+
+    assert len(calls) == 1  # no retries needed
+
+
+def test_raises_extraction_failed_error_after_exhausting_all_attempts(session, cba_source, monkeypatch):
+    monkeypatch.setattr("ingestion.extraction.extract_rules.time.sleep", lambda _: None)
+
+    calls = []
+
+    def always_malformed(entity_name, source_text):
+        calls.append(1)
+        return "still not json"
+
+    with pytest.raises(ExtractionFailedError):
+        extract_candidates(session, cba_source, llm_call=always_malformed)
+
+    assert len(calls) == MAX_EXTRACTION_ATTEMPTS
+
+
+def test_failed_extraction_inserts_no_candidates(session, cba_source, monkeypatch):
+    """A failure-after-retries must not leave partial/garbage candidate rows behind."""
+    monkeypatch.setattr("ingestion.extraction.extract_rules.time.sleep", lambda _: None)
+
+    def always_malformed(entity_name, source_text):
+        return "not json"
+
+    with pytest.raises(ExtractionFailedError):
+        extract_candidates(session, cba_source, llm_call=always_malformed)
+
+    assert session.scalars(select(CandidateRule)).all() == []
+
+
+def test_extraction_failed_error_is_distinct_from_empty_result(session, cba_source, monkeypatch):
+    """
+    The whole point of ExtractionFailedError: callers must be able to tell "genuinely
+    nothing extractable" (a clean [] -- returns normally) apart from "the model never
+    responded usably" (raises) rather than treating both as "0 candidates".
+    """
+    monkeypatch.setattr("ingestion.extraction.extract_rules.time.sleep", lambda _: None)
+
+    clean_empty = extract_candidates(session, cba_source, llm_call=lambda e, t: json.dumps([]))
+    assert clean_empty == []  # not an exception
+
+    with pytest.raises(ExtractionFailedError):
+        extract_candidates(session, cba_source, llm_call=lambda e, t: "garbage")

@@ -1,0 +1,47 @@
+# Template for recording a manually-run calculator-probe session
+# (CONTEXT.md 9b.5). This project has no browser-automation tool -- YOU run the
+# lender's calculator by hand, holding baseline inputs constant and varying only
+# the HECS/HELP field across the matrix below, then record what came out here.
+#
+# Before probing: respect the same rules ingestion/scrapers/base.py already
+# applies to every scraper -- check the site's robots.txt/ToS, don't hammer it
+# (a human clicking through a form a handful of times is fine; a scripted loop
+# submitting hundreds of variations is not), and save a screenshot of each
+# result as the source artifact (put it under sources/calculator_probes/<lender>/).
+#
+# Run with:
+#   python3 -m ingestion.calculator_probe_intake ingestion/calculator_probes/your_file.yaml
+
+lender: "EXAMPLE_LENDER"                # must match the lender name used elsewhere in the DB
+calculator_url: "https://example.com/borrowing-power-calculator"
+probe_session_date: "2026-09-19"        # the date YOU ran the probes, not today by default
+
+baseline:                               # held IDENTICAL across every run below
+  income_aud: 140000
+  other_debts_aud: 5000
+  loan_term_years: 30
+
+runs:
+  - label: "no_hecs"
+    hecs_balance_aud: 0
+    hecs_years_remaining: null
+    borrowing_power_result_aud: 0        # replace with the calculator's actual output
+    screenshot_path: "sources/calculator_probes/example_lender/no_hecs.png"
+
+  - label: "small_balance_1yr_remaining"
+    hecs_balance_aud: 5000
+    hecs_years_remaining: 1
+    borrowing_power_result_aud: 0
+    screenshot_path: "sources/calculator_probes/example_lender/small_1yr.png"
+
+  - label: "same_balance_5yr_remaining"
+    hecs_balance_aud: 5000
+    hecs_years_remaining: 5
+    borrowing_power_result_aud: 0
+    screenshot_path: "sources/calculator_probes/example_lender/small_5yr.png"
+
+  - label: "large_balance_1yr_remaining"
+    hecs_balance_aud: 40000
+    hecs_years_remaining: 1
+    borrowing_power_result_aud: 0
+    screenshot_path: "sources/calculator_probes/example_lender/large_1yr.png"

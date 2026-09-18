@@ -1,0 +1,114 @@
+# Broker/comparison-site content on NAB's serviceability treatment, found via
+# targeted research (Task P2.4).
+
+sources:
+  - lender: "NAB"
+    url: "https://www.brokerdaily.au/lender/20647-nab-introduces-help-debt-servicing-changes"
+    source_type: "trade_press"
+    retrieved_date: "2026-09-18"
+    note: >
+      Broker Daily, "NAB introduces HELP debt servicing changes" (published
+      2025-07-25, effective 2025-07-31, ahead of APRA's 30 Sept 2025 deadline).
+      Numeric example independently corroborated by Yahoo Finance, "NAB joins
+      Commonwealth Bank in major HECS change for home loan borrowers"
+      (published 2025-07-24):
+      https://au.finance.yahoo.com/news/nab-joins-commonwealth-bank-in-major-hecs-change-for-home-loan-borrowers-sooner-233835173.html
+      -- citing NAB's own Senate inquiry submission for the numeric example.
+      This is well-sourced (two independent outlets, an official-submission-
+      derived figure) -- a strong candidate for corroboration once promoted.
+    rules:
+      - debt_type: "HECS_HELP"
+        rule_description: >
+          NAB no longer counts HELP/HECS debt in home loan servicing if the
+          balance is $20,000 or less (requires ATO evidence of the balance),
+          effective 31 July 2025. NAB's own Senate inquiry submission gives a
+          worked example: income $125,000, HECS debt $26,500, $5,000 credit
+          card limit -> borrowing capacity WITH HECS counted = $497,000,
+          WITHOUT HECS counted = $587,000 ($90,000 difference). Note the
+          example's $26,500 balance is actually above the $20k threshold
+          described as the cutoff -- worth resolving this apparent inconsistency
+          before treating the $20k figure as precise.
+        conditions:
+          help_balance_max_aud: 20000
+        effect:
+          treatment: "excluded_from_serviceability"
+          requires_evidence: "ATO evidence of balance"
+          worked_example: "income $125,000, HECS $26,500 -> $497,000 (counted) vs $587,000 (excluded)"
+        confidence: "single_anecdotal_source"
+        effective_from: "2025-07-31"
+
+  - lender: "NAB"
+    url: "https://au.finance.yahoo.com/news/anz-joins-westpac-cba-nab-in-easing-home-loan-rules-for-self-employed-aussies-cutting-red-tape-022214249.html"
+    source_type: "trade_press"
+    retrieved_date: "2026-09-18"
+    note: >
+      Yahoo Finance, "ANZ joins Westpac, CBA, NAB in easing home loan rules for
+      self-employed Aussies" (published 2025-08-07). DTI tightening figure from
+      Banking Day, "NAB tightens loan assessment benchmark" -- publish date not
+      confirmed on fetch, flag as weaker-dated corroboration.
+    rules:
+      - debt_type: "home_loan"
+        rule_description: >
+          NAB moved to accept a single year's financial statements (previously
+          two) for self-employed borrowers with LVR <=80%, effective March 2025
+          (requires lodged tax return + Notice of Assessment; unlodged figures
+          don't count). Separately, NAB tightened its DTI threshold for
+          non-PAYG applicants from 9x to 8x income -- an applicant is likely
+          declined if debts exceed 8x annual income.
+        conditions:
+          borrower_type: "self_employed"
+        effect:
+          financials_years_required: 1
+          max_lvr_pct: 80
+          requires: "lodged tax return + Notice of Assessment"
+          dti_threshold_multiple: 8
+          effective_from_note: "March 2025"
+        confidence: "single_anecdotal_source"
+
+  - lender: "NAB"
+    url: "https://aussiewidefs.com.au/home-loan-while-on-probation-casual-overtime/"
+    source_type: "broker_content_marketing"
+    retrieved_date: "2026-09-18"
+    note: >
+      WEAK SOURCING -- flagged explicitly by the researching agent as drawn from
+      search-engine synthesis rather than one clean quoted primary source. On
+      direct fetch, this specific aggregator page named only Macquarie and
+      Bankwest, NOT NAB. Included here anyway per CONTEXT.md 9c ("a lead, not a
+      fact") but treat this one as the weakest entry in this file -- worth an
+      explicit re-verification pass before relying on it at all.
+    rules:
+      - debt_type: "home_loan"
+        rule_description: >
+          Multiple broker sources describe NAB as generally preferring 6 months
+          in a current casual role, but notably flexible on probation --
+          sometimes accepting applications after ~3 months on probation, or
+          with just 2 payslips plus an employment contract/employer letter,
+          rather than a fixed minimum. Could not be pinned to one clean primary
+          source.
+        conditions:
+          employment_type: "casual_or_probationary"
+        effect:
+          casual_minimum_months_preferred: 6
+          probation_minimum_months: 3
+          probation_alt_evidence: "2 payslips + employment contract or employer letter"
+        confidence: "single_anecdotal_source"
+
+  - lender: "NAB"
+    url: "https://www.propertychat.com.au/community/threads/nab-increasing-borrowing-capacity.69580/"
+    source_type: "broker_social"
+    retrieved_date: "2026-09-18"
+    note: >
+      WEAK SOURCING -- a PropertyChat forum discussion thread, not a
+      brokerage/publisher site, and not independently confirmed via a single
+      clean primary-source fetch. Treat as needing independent verification.
+    rules:
+      - debt_type: "home_loan"
+        rule_description: >
+          NAB reportedly reduced its rental income shading on servicing
+          calculators from 20% to 10% (i.e. now counting 90% of rental income
+          instead of 80%).
+        conditions:
+          income_type: "rental"
+        effect:
+          rental_income_recognised_pct: 90
+        confidence: "single_anecdotal_source"

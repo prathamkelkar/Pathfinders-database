@@ -5,4 +5,6 @@ __pycache__/
 *.db
 sources/*
 !sources/.gitkeep
+logs/*
+!logs/.gitkeep
 .env
