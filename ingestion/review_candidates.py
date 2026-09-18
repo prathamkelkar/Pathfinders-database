@@ -18,16 +18,20 @@ from db.session import get_session
 def find_conflict(session: Session, candidate: CandidateRule) -> ProductionRule | None:
     """
     A same-tier conflict is: an existing production_rule for the same lender,
-    debt_type, and source_tier, with identical conditions but a different
-    effect. Deliberately conservative rather than exhaustive -- section 6 asks
-    to keep this simple; anything subtler is still visible in the printed
-    summary for the human to judge.
+    debt_type, source_tier, AND policy_area, with identical conditions but a
+    different effect. The policy_area match matters -- without it, a break_cost
+    rule and a serviceability rule that happen to share identical conditions
+    (e.g. both {"loan_type": "Fixed Rate"}) would be flagged as conflicting with
+    each other despite being about entirely different things. Deliberately
+    conservative rather than exhaustive -- section 6 asks to keep this simple;
+    anything subtler is still visible in the printed summary for the human to judge.
     """
     existing = session.scalars(
         select(ProductionRule).where(
             ProductionRule.lender == candidate.lender,
             ProductionRule.debt_type == candidate.debt_type,
             ProductionRule.source_tier == candidate.source_tier,
+            ProductionRule.policy_area == candidate.policy_area,
         )
     ).all()
     for rule in existing:
@@ -66,6 +70,7 @@ def promote(session: Session, candidate: CandidateRule, conflict: ProductionRule
     production_rule = ProductionRule(
         lender=candidate.lender,
         debt_type=candidate.debt_type,
+        policy_area=candidate.policy_area,
         conditions=candidate.conditions,
         effect=candidate.effect,
         source_tier=candidate.source_tier,

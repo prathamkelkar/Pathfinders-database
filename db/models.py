@@ -70,6 +70,21 @@ LAYER3_SOURCE_TYPES = (
     "broker_interview",
 )
 
+# Which ASPECT of a lender's handling of a debt_type this rule is about -- orthogonal
+# to debt_type itself (e.g. multiple policy_area rules can share debt_type="home_loan").
+# "serviceability" covers the project's original scope (how debt affects borrowing
+# assessment); the other three were added to support refinancing/switching decisions
+# per CONTEXT.md section 3's revised category coverage. Nullable: rules extracted
+# before this column existed predate the dimension entirely (not miscategorized --
+# simply not yet classified under it) and are left None rather than backfilled with
+# a guess.
+POLICY_AREAS = (
+    "serviceability",     # how this debt is treated in a borrowing-capacity assessment
+    "break_cost",         # early exit / break fees for ending a loan or fixed term early
+    "discharge",          # process and timeline to fully discharge and close out a loan
+    "switching",          # internal product/rate-type switching, no full refinance
+)
+
 
 class Base(DeclarativeBase):
     pass
@@ -123,13 +138,41 @@ class RuleFieldsMixin:
     see CONTEXT.md section 2. The columns that must be queryable/joinable across all rule
     types (lender, debt_type, tiers, dates) stay as real typed columns.
 
-    Example for the CBA HECS case (CONTEXT.md section 2):
+    Example for the CBA HECS case (CONTEXT.md section 2), policy_area="serviceability":
         lender = "CBA", debt_type = "HECS_HELP"
         conditions = {"years_remaining_max": 1}
         effect = {"treatment": "excluded_from_serviceability"}
     and:
         conditions = {"years_remaining_min": 1, "years_remaining_max": 5}
         effect = {"treatment": "reduced_buffer", "buffer_pct": 1.0, "default_buffer_pct": 3.0}
+
+    Conventions for the other policy_area values added for refinancing/switching
+    coverage (CONTEXT.md section 3) -- same reasoning as the HECS case: shapes vary
+    per rule, so these are documented conventions for `conditions`/`effect`, not
+    separate typed columns:
+
+    policy_area="break_cost" -- the whole point is that break costs are usually a
+    FORMULA, not a flat number, so effect always carries a description even when a
+    flat fee also applies. Real example, CBA (candidate_rule id=4, from its own
+    T&Cs): conditions = {"loan_type": "Fixed Rate", "action": "prepayment exceeding
+    $10,000 per fixed term year or full payoff earlier than expected"}, effect =
+    {"early_repayment_adjustment_charged": true, "administrative_fee_charged": true,
+    "calculation_basis": "difference between wholesale market swap rate at fixing
+    and at prepayment for balance of fixed period", "maximum": "estimate of Bank's
+    loss"}. `calculation_basis` (or an equivalent descriptive key) holds the
+    formula/method in plain English -- there's no `fee_amount_aud`-only path for a
+    genuine break-cost rule, because that would misrepresent a variable, formula-
+    driven cost as a fixed one.
+
+    policy_area="discharge" -- e.g. conditions = {"loan_type": "any"}, effect =
+    {"process_description": "borrower submits a discharge authority form; bank
+    prepares and lodges the discharge with the land titles office", "typical_timeline_days":
+    10, "fee_aud": 350}.
+
+    policy_area="switching" -- e.g. conditions = {"from_product": "variable_rate",
+    "to_product": "fixed_rate"}, effect = {"requires_full_refinance": false,
+    "fee_aud": 0, "process_description": "internal rate-type switch via online
+    banking or a switch form, no new credit assessment required"}.
     """
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -137,6 +180,17 @@ class RuleFieldsMixin:
     # --- Identity / applicability ---
     lender: Mapped[str] = mapped_column(String, nullable=False)
     debt_type: Mapped[str] = mapped_column(String, nullable=False)
+
+    # Which aspect of debt_type this rule covers (see POLICY_AREAS above) -- a real
+    # column, not JSON, specifically so query_rule() can filter by it directly rather
+    # than relying on `conditions` alone. Without this, a break_cost rule and a
+    # serviceability rule that both happen to share debt_type="home_loan" and don't
+    # constrain some of the same condition keys can spuriously "both match" a query
+    # that wasn't asking about either dimension -- the same ambiguity already
+    # observed between NAB's self-employed and rental-shading rules. Nullable: see
+    # POLICY_AREAS' comment on pre-existing rows.
+    policy_area: Mapped[str | None] = mapped_column(Enum(*POLICY_AREAS, name="policy_area"), nullable=True)
+
     conditions: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     effect: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 

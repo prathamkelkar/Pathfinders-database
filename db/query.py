@@ -71,6 +71,7 @@ class SourceCitation:
 class RuleMatch:
     lender: str
     debt_type: str
+    policy_area: str | None
     conditions: dict
     effect: dict
     confidence: str
@@ -142,6 +143,7 @@ def _to_rule_match(rule: ProductionRule) -> RuleMatch:
     return RuleMatch(
         lender=rule.lender,
         debt_type=rule.debt_type,
+        policy_area=rule.policy_area,
         conditions=rule.conditions,
         effect=rule.effect,
         confidence=rule.confidence,
@@ -188,12 +190,15 @@ def _conditions_satisfied(conditions: dict, params: dict) -> bool:
 
 
 def _same_tier_conflicts(session: Session, rule: ProductionRule) -> list[ProductionRule]:
-    """Same lookup semantics review_candidates.find_conflict() uses at promotion time."""
+    """Same lookup semantics review_candidates.find_conflict() uses at promotion time,
+    including the policy_area match -- a break_cost rule and a serviceability rule
+    with identical `conditions` are about different things, not a conflict."""
     others = session.scalars(
         select(ProductionRule).where(
             ProductionRule.lender == rule.lender,
             ProductionRule.debt_type == rule.debt_type,
             ProductionRule.source_tier == rule.source_tier,
+            ProductionRule.policy_area == rule.policy_area,
             ProductionRule.id != rule.id,
         )
     ).all()
@@ -220,6 +225,7 @@ def query_rule(
     *,
     lender: str,
     debt_type: str,
+    policy_area: str | None = None,
     as_of: date | None = None,
     **params,
 ) -> RuleQueryResult:
@@ -229,6 +235,16 @@ def query_rule(
     years_remaining=3 for the CBA HECS case), return the applicable production rule
     together with its source citation and confidence tier -- or a clean "no data"
     result if nothing matches.
+
+    `policy_area` (one of db.models.POLICY_AREAS, e.g. "break_cost", "discharge",
+    "switching", "serviceability") is an explicit filter, not a **params condition
+    -- multiple rules for the same lender/debt_type can cover entirely different
+    policy areas (a break-cost rule and a serviceability rule can both apply to
+    CBA/home_loan), and without this filter a caller who doesn't ask about the
+    dimension that would disambiguate them risks a spurious conflicting_sources=True
+    the same way NAB's self-employed and rental-shading rules once did. Pass None
+    (the default) to search across all policy areas as before -- existing callers
+    of this function are unaffected.
 
     Guarantees:
     - Reads ONLY `production_rules` (never `candidate_rules` -- those are unreviewed
@@ -259,13 +275,15 @@ def query_rule(
     """
     as_of = as_of or date.today()
 
-    candidates = session.scalars(
-        select(ProductionRule).where(
-            ProductionRule.lender == lender,
-            ProductionRule.debt_type == debt_type,
-            ProductionRule.effective_from <= as_of,
-        )
-    ).all()
+    filters = [
+        ProductionRule.lender == lender,
+        ProductionRule.debt_type == debt_type,
+        ProductionRule.effective_from <= as_of,
+    ]
+    if policy_area is not None:
+        filters.append(ProductionRule.policy_area == policy_area)
+
+    candidates = session.scalars(select(ProductionRule).where(*filters)).all()
     candidates = [
         r
         for r in candidates
@@ -281,7 +299,8 @@ def query_rule(
             debt_type=debt_type,
             rates=rates,
             message=(
-                f"No production rule found for lender={lender!r}, debt_type={debt_type!r} "
+                f"No production rule found for lender={lender!r}, debt_type={debt_type!r}"
+                f"{f', policy_area={policy_area!r}' if policy_area else ''} "
                 f"matching parameters={params!r} as of {as_of.isoformat()}."
             ),
         )
