@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from sqlalchemy.orm import Session
 
-from db.models import CandidateRule, Source
+from db.models import POLICY_AREAS, CandidateRule, Source
 
 logger = logging.getLogger("ingestion.extraction")
 
@@ -105,13 +105,13 @@ def _get_client() -> OpenAI:
     return OpenAI(base_url=NVIDIA_BASE_URL, api_key=api_key, timeout=REQUEST_TIMEOUT_SECONDS)
 
 
-def call_llm(entity_name: str, source_text: str) -> str:
+def call_llm(entity_name: str, source_text: str, system_prompt: str | None = None) -> str:
     """Send one extraction request. Returns the raw model response text."""
     client = _get_client()
     response = client.chat.completions.create(
         model=NVIDIA_MODEL,
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt or SYSTEM_PROMPT},
             {"role": "user", "content": f"Entity: {entity_name}\n\nDocument text:\n\n{source_text}"},
         ],
         max_tokens=16000,
@@ -139,21 +139,46 @@ def extract_candidates(
     source: Source,
     *,
     llm_call=call_llm,
+    prompt_version: str = EXTRACTION_PROMPT_VERSION,
+    text_override: str | None = None,
+    default_policy_area: str | None = None,
 ) -> list[CandidateRule]:
     """
     Extract candidate rules from `source.raw_content` and insert them into
     `candidate_rules` (never `production_rules`). Returns the inserted rows.
 
+    !! THIS FUNCTION FLUSHES BUT DOES NOT COMMIT. The caller MUST commit. !!
+    That's deliberate -- change_detection.check_lender_source() needs the new
+    `sources` row and its candidates to land in one atomic transaction, so this
+    can't commit on its own. But it is a genuine footgun: a long extraction run
+    that never commits loses every LLM call it paid for the moment the process
+    dies, which is exactly what happened to the first version of the v2
+    loan-mechanics pass. If you write a new caller, commit -- and commit
+    incrementally, not once at the end of a multi-document run.
+
     `llm_call` is injectable so tests can supply a canned response instead of
-    hitting a real API.
+    hitting a real API. To run a DIFFERENT prompt against the same source, pass
+    `functools.partial(call_llm, system_prompt=...)` plus the matching
+    `prompt_version` -- that pairing is what 4i's versioning exists for, so the
+    two must always be set together.
+
+    `text_override` sends something other than the full raw_content to the model
+    (e.g. only the excerpts relevant to a targeted extraction pass). The stored
+    candidate still links to the full source record, so provenance is unaffected.
+
+    `default_policy_area` is applied to any extracted item that doesn't state its
+    own; an item may also return a "policy_area" field, which is validated
+    against POLICY_AREAS and wins over the default.
     """
     if not source.raw_content:
         raise ValueError(f"source {source.id} has no raw_content to extract from")
 
+    source_text = text_override if text_override is not None else source.raw_content
+
     items = None
     last_error: Exception | None = None
     for attempt in range(1, MAX_EXTRACTION_ATTEMPTS + 1):
-        raw_response = llm_call(source.entity_name, source.raw_content)
+        raw_response = llm_call(source.entity_name, source_text)
         try:
             items = _parse_json_array(raw_response)
             break
@@ -186,9 +211,17 @@ def extract_candidates(
             # attached isn't usable, so skip it rather than invent one.
             continue
 
+        # An item may name its own policy_area; anything unrecognised is dropped
+        # back to the default rather than written through, since a bad enum value
+        # would fail the insert anyway and a guessed one would be worse than none.
+        item_policy_area = item.get("policy_area")
+        if item_policy_area not in POLICY_AREAS:
+            item_policy_area = None
+
         candidate = CandidateRule(
             lender=source.entity_name,
             debt_type=debt_type,
+            policy_area=item_policy_area or default_policy_area,
             conditions=item.get("conditions") or {},
             effect=item.get("effect") or {},
             source_tier=source.source_tier,
@@ -202,7 +235,7 @@ def extract_candidates(
             effective_to=_parse_date(item.get("effective_to")),
             confidence=confidence,
             conflicting_sources=False,
-            extraction_prompt_version=EXTRACTION_PROMPT_VERSION,
+            extraction_prompt_version=prompt_version,
             source_id=source.id,
         )
         session.add(candidate)

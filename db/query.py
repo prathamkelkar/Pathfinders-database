@@ -9,7 +9,7 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from db.models import SOURCE_TIERS, ProductionRule, Rate, Source
+from db.models import SOURCE_TIERS, ProductionRule, Rate, RefinanceOffer, Source
 
 
 def _conditions_match(conditions: dict, years_remaining: float) -> bool:
@@ -95,6 +95,30 @@ class RateMatch:
     rate_type: str
     rate_pct: float
     source: SourceCitation
+
+
+@dataclass(frozen=True)
+class RefinanceOfferMatch:
+    lender: str
+    offer_name: str | None
+    cashback_amount_aud: float | None
+    minimum_loan_amount_aud: float | None
+    maximum_lvr_pct: float | None
+    eligibility_conditions: dict
+    clawback_period_months: int | None
+    clawback_conditions: dict
+    other_benefits: dict
+    offer_expiry_date: date | None
+    effective_from: date
+    effective_to: date | None
+    source: SourceCitation
+    # True when the LENDER's own stated expiry has passed as of the query date --
+    # detectable with no network call, which is the point (see RefinanceOffer's
+    # docstring). Only ever True in results when include_expired=True was asked for.
+    is_expired: bool
+    # Set (non-None) when this row is expired or looks stale -- same "surface it,
+    # don't silently drop it" treatment confidence_warning gets on rules.
+    staleness_warning: str | None
 
 
 @dataclass(frozen=True)
@@ -339,3 +363,77 @@ def query_rule(
         rates=rates,
         message="OK",
     )
+
+
+# --- Refinance offers (fast-cadence promotional data -- separate table, separate
+# read path, same read-only/deterministic guarantees as query_rule) ---
+
+
+def _to_refinance_offer_match(offer: RefinanceOffer, as_of: date) -> RefinanceOfferMatch:
+    is_expired = offer.offer_expiry_date is not None and offer.offer_expiry_date < as_of
+    warning = None
+    if is_expired:
+        warning = (
+            f"EXPIRED OFFER: this offer's stated expiry date ({offer.offer_expiry_date.isoformat()}) "
+            f"has passed as of {as_of.isoformat()}, but it is still the most recent record we hold "
+            f"for {offer.lender}. It must not be presented as available -- re-check the lender's "
+            f"offer page (ingestion.refinance_offers.check_refinance_offer_source) to find out what "
+            f"replaced it."
+        )
+    return RefinanceOfferMatch(
+        lender=offer.lender,
+        offer_name=offer.offer_name,
+        cashback_amount_aud=offer.cashback_amount_aud,
+        minimum_loan_amount_aud=offer.minimum_loan_amount_aud,
+        maximum_lvr_pct=offer.maximum_lvr_pct,
+        eligibility_conditions=offer.eligibility_conditions,
+        clawback_period_months=offer.clawback_period_months,
+        clawback_conditions=offer.clawback_conditions,
+        other_benefits=offer.other_benefits,
+        offer_expiry_date=offer.offer_expiry_date,
+        effective_from=offer.effective_from,
+        effective_to=offer.effective_to,
+        source=_citation(offer.source),
+        is_expired=is_expired,
+        staleness_warning=warning,
+    )
+
+
+def get_active_refinance_offers(
+    session: Session,
+    *,
+    lender: str | None = None,
+    as_of: date | None = None,
+    include_expired: bool = False,
+) -> list[RefinanceOfferMatch]:
+    """
+    Read-only, deterministic lookup of refinance offers -- same guarantees as
+    query_rule(): no network call, no LLM, only committed rows.
+
+    Two independent date filters apply, because they mean different things
+    (see RefinanceOffer's docstring):
+    - OUR versioning window (effective_from/effective_to) selects the record that
+      was current as of `as_of` -- this is what makes point-in-time queries work.
+    - The LENDER's own `offer_expiry_date` decides whether that record describes an
+      offer a borrower could actually still take up.
+
+    An offer that's within our versioning window but past its stated expiry is
+    excluded by default (the function is get_ACTIVE_offers, and presenting a lapsed
+    cashback as available is the specific harm worth avoiding here). Pass
+    include_expired=True to get it back anyway, flagged via is_expired and
+    staleness_warning -- useful for spotting which lenders need a re-scrape, since
+    that check costs nothing and needs no network access.
+    """
+    as_of = as_of or date.today()
+
+    filters = [RefinanceOffer.effective_from <= as_of]
+    if lender is not None:
+        filters.append(RefinanceOffer.lender == lender)
+
+    offers = session.scalars(select(RefinanceOffer).where(*filters)).all()
+    current = [o for o in offers if o.effective_to is None or o.effective_to >= as_of]
+
+    matches = [_to_refinance_offer_match(o, as_of) for o in current]
+    if not include_expired:
+        matches = [m for m in matches if not m.is_expired]
+    return matches

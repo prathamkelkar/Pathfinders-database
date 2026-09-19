@@ -8,3 +8,5 @@ sources/*
 logs/*
 !logs/.gitkeep
 .env
+debt_policy.db-journal
+*.db-journal

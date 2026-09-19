@@ -15,6 +15,17 @@ SOURCE_TIER = "lender_official"
 DOCUMENT_URLS = [
     "https://www.westpac.com.au/content/dam/public/wbc/documents/pdf/pb/Flexi_Loan_Conditions.pdf",
     "https://www.westpac.com.au/content/dam/public/wbc/documents/pdf/pb/personal-loans/p-l-contract-general-conditions-180324.pdf",
+    # Added after the targeted break-cost/discharge pass found ZERO break-cost
+    # vocabulary in the two documents above -- correctly so: they're Personal Loan
+    # and Flexi Loan terms, and personal loans don't carry fixed-rate break costs.
+    # Westpac AU does not publish its home loan contract terms as a public PDF (the
+    # contract is issued in the loan offer pack; its /terms-conditions hub links no
+    # mortgage T&Cs, and the Premier Advantage Package conditions booklet was checked
+    # and contains no break-cost or discharge vocabulary at all). These two
+    # server-rendered pages are Westpac's own substantive public statement of home
+    # loan break-cost policy -- 77 and 52 keyword hits respectively.
+    "https://www.westpac.com.au/personal-banking/home-loans/manage-home-loan/break-cost/what-is-a-break-cost/",
+    "https://www.westpac.com.au/personal-banking/home-loans/manage-home-loan/break-cost/",
 ]
 
 DEST_DIR = Path("sources/westpac")

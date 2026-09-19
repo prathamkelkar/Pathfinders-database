@@ -208,3 +208,33 @@ def test_already_promoted_candidates_are_not_listed_again(session, source):
     approved, skipped = run_review(session, input_func=lambda prompt: "y")
 
     assert (approved, skipped) == (0, 0)
+
+
+def test_rejected_candidate_disappears_from_the_review_queue(session, source):
+    from ingestion.review_candidates import reject_candidate
+
+    candidate = make_candidate(session, source)
+    reject_candidate(session, candidate, reason="NCCP boilerplate, not lender policy")
+
+    approved, skipped = run_review(session, input_func=lambda p: "y")
+
+    assert (approved, skipped) == (0, 0)
+    assert candidate.rejected_at is not None
+    assert session.scalars(select(ProductionRule)).all() == []
+
+
+def test_rejection_requires_a_reason(session, source):
+    from ingestion.review_candidates import reject_candidate
+
+    candidate = make_candidate(session, source)
+    with pytest.raises(ValueError, match="reason is required"):
+        reject_candidate(session, candidate, reason="")
+
+
+def test_skipping_still_leaves_a_candidate_in_the_queue(session, source):
+    """Skip and reject must stay distinct -- skip means 'not now', reject means 'never'."""
+    make_candidate(session, source)
+    run_review(session, input_func=lambda p: "n")
+
+    approved, skipped = run_review(session, input_func=lambda p: "n")
+    assert skipped == 1

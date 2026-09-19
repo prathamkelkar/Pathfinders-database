@@ -120,7 +120,14 @@ def promote(session: Session, candidate: CandidateRule, conflict: ProductionRule
 def run_review(session: Session, *, approve_all: bool = False, input_func=input) -> tuple[int, int]:
     """Returns (approved_count, skipped_count)."""
     candidates = session.scalars(
-        select(CandidateRule).where(CandidateRule.promoted_to_production_rule_id.is_(None))
+        # Exclude both already-promoted AND explicitly-rejected candidates. Without
+        # the rejection filter, junk a human has already dismissed (e.g. NCCP
+        # boilerplate extracted from a Credit Guide) reappears in every future
+        # review pass, and the queue never converges.
+        select(CandidateRule).where(
+            CandidateRule.promoted_to_production_rule_id.is_(None),
+            CandidateRule.rejected_at.is_(None),
+        )
     ).all()
 
     if not candidates:
@@ -171,3 +178,20 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     run_review(get_session(), approve_all=args.approve_all)
+
+
+def reject_candidate(session: Session, candidate: CandidateRule, reason: str) -> CandidateRule:
+    """
+    Mark a candidate as reviewed-and-rejected so it stops resurfacing in the
+    review queue. The row is kept rather than deleted -- that a bad extraction
+    happened is useful signal about the prompt or the source document, and
+    silently deleting it would hide that.
+    """
+    from datetime import date as _date
+
+    if not reason:
+        raise ValueError("a rejection reason is required -- an unexplained rejection is unreviewable later")
+    candidate.rejected_at = _date.today()
+    candidate.rejection_reason = reason
+    session.commit()
+    return candidate

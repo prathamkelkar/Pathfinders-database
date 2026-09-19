@@ -86,7 +86,18 @@ LENDERS: dict[str, LenderConfig] = {
     "firstmac": LenderConfig(
         entity_name="Firstmac",
         # Deposit PDSs doc excluded -- it's for term deposits, not home loans/credit.
-        urls=("https://www.firstmac.com.au/media/docs/financial-services-guide.pdf",),
+        # FAQs added after the targeted break-cost/discharge pass found zero relevant
+        # vocabulary in the FSG (an FSG is a licensing disclosure, not loan terms).
+        # Firstmac's actual loan terms -- "Your Loan General Terms and Conditions" and
+        # "Your Mortgage Common Provisions", named on their own loan-agreement page --
+        # are NOT published publicly; they're issued with the loan offer pack, and
+        # their loan-docs microsite only hosts printing/how-to helper guides. The FAQs
+        # are thin on this (one break-fee and one payout-figure mention) but are the
+        # only public Firstmac page that addresses it at all.
+        urls=(
+            "https://www.firstmac.com.au/media/docs/financial-services-guide.pdf",
+            "https://www.firstmac.com.au/faqs",
+        ),
         dest_dir=Path("sources/firstmac"),
     ),
     "moneyme": LenderConfig(
@@ -106,11 +117,18 @@ LENDERS: dict[str, LenderConfig] = {
     ),
     "liberty": LenderConfig(
         entity_name="Liberty Financial",
-        # No T&Cs/PDS PDF found anywhere on liberty.com.au (Task 3 finding).
-        # This "Responsible Lending Policy" page is the only public document
-        # located, and (per the module docstring) it's generic NCCP boilerplate,
-        # not a real policy -- included anyway for completeness/provenance.
-        urls=("https://www.liberty.com.au/disclosures/responsible-lending",),
+        # The responsible-lending page is generic NCCP boilerplate, not loan terms --
+        # the targeted break-cost/discharge pass correctly found nothing in it.
+        # FAQs added as the correction: 17 break-cost hits (including Liberty's own
+        # "economic cost" framing) and 3 discharge hits. Liberty AU does not publish
+        # its home loan contract terms publicly. NOTE: a "Liberty MORTGAGE LOAN
+        # AGREEMENT SPECIFIC TERMS" PDF does surface in search, but it is Liberty
+        # Financial NEW ZEALAND (Auckland address, libfin.co.nz) -- a different
+        # entity, deliberately NOT used here, same trap as the Westpac/ANZ NZ docs.
+        urls=(
+            "https://www.liberty.com.au/disclosures/responsible-lending",
+            "https://www.liberty.com.au/about-us/faqs",
+        ),
         dest_dir=Path("sources/liberty"),
     ),
     "afterpay": LenderConfig(

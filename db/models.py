@@ -8,7 +8,9 @@ Layer summary (see CONTEXT.md section 4):
   extraction writes to CandidateRule, a human promotes rows into ProductionRule.
 - CorroboratingSource: Layer 3 corroboration gate for broker_sourced production
   rules (9c) -- see ingestion/layer3_verification.py.
-- Rate: decoupled from rules, its own refresh cadence (4b).
+- Rate / RefinanceOffer: fast-cadence commodity + promotional data, decoupled from
+  rules and from each other (4b) -- see RefinanceOffer's docstring for why these
+  are two tables rather than one.
 """
 
 from datetime import date, datetime
@@ -70,14 +72,24 @@ LAYER3_SOURCE_TYPES = (
     "broker_interview",
 )
 
+# Whether a policy_area applies to a lender at all, and if so whether we hold it.
+# Absence of a PolicyAreaCoverage row means "never assessed" -- that's the null
+# case, deliberately NOT an enum value, so it can never be confused with a positive
+# finding of non-applicability.
+COVERAGE_STATUSES = (
+    "not_applicable",        # assessed: this lender's products have no such concept
+    "applicable_not_found",  # applies, but we don't hold the policy yet
+    "applicable_found",      # applies, and we hold at least one rule for it
+)
+
 # Which ASPECT of a lender's handling of a debt_type this rule is about -- orthogonal
 # to debt_type itself (e.g. multiple policy_area rules can share debt_type="home_loan").
 # "serviceability" covers the project's original scope (how debt affects borrowing
 # assessment); the other three were added to support refinancing/switching decisions
-# per CONTEXT.md section 3's revised category coverage. Nullable: rules extracted
-# before this column existed predate the dimension entirely (not miscategorized --
-# simply not yet classified under it) and are left None rather than backfilled with
-# a guess.
+# per CONTEXT.md section 3's revised category coverage. Nullable on rules: rows
+# extracted before this column existed predate the dimension entirely (not
+# miscategorized -- simply not yet classified under it) and are left None rather
+# than backfilled with a guess.
 POLICY_AREAS = (
     "serviceability",     # how this debt is treated in a borrowing-capacity assessment
     "break_cost",         # early exit / break fees for ending a loan or fixed term early
@@ -127,6 +139,8 @@ class Source(Base):
     candidate_rules: Mapped[list["CandidateRule"]] = relationship(back_populates="source")
     production_rules: Mapped[list["ProductionRule"]] = relationship(back_populates="source")
     rates: Mapped[list["Rate"]] = relationship(back_populates="source")
+    refinance_offers: Mapped[list["RefinanceOffer"]] = relationship(back_populates="source")
+    policy_area_coverage: Mapped[list["PolicyAreaCoverage"]] = relationship(back_populates="source")
 
 
 class RuleFieldsMixin:
@@ -262,6 +276,15 @@ class CandidateRule(RuleFieldsMixin, Base):
         ForeignKey("production_rules.id"), nullable=True
     )
 
+    # Reviewed and explicitly rejected. Without this, the review queue has only two
+    # states -- promoted or not-yet-promoted -- so a candidate a human has already
+    # looked at and dismissed (e.g. NCCP boilerplate extracted from a Credit Guide,
+    # which says nothing about that lender's actual policy) resurfaces in every
+    # future review pass forever. Rejected rows are kept, not deleted: the fact that
+    # a bad extraction happened is itself useful signal about a prompt or a source.
+    rejected_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     corroborating_sources: Mapped[list["CorroboratingSource"]] = relationship(
         back_populates="candidate_rule", cascade="all, delete-orphan"
     )
@@ -329,6 +352,131 @@ class CorroboratingSource(Base):
     is_direct_confirmation: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class PolicyAreaCoverage(Base):
+    """
+    Records an explicit determination about whether a given policy_area even
+    APPLIES to a given lender -- and if it does, whether we've found it yet.
+
+    Why this can't live on production_rules: the whole point is to record the
+    ABSENCE of a rule, and you cannot represent "there is no such rule, and
+    there never will be" as a rule row. Without this table, four genuinely
+    different situations all look identical (no rows returned):
+
+      - never assessed                     -> no row here at all
+      - assessed, genuinely doesn't apply  -> status="not_applicable"
+      - applies, we haven't found it yet   -> status="applicable_not_found"
+      - applies, we hold rules for it      -> status="applicable_found"
+
+    That ambiguity caused real waste: Afterpay, MoneyMe and Wisr were all
+    reported as break-cost/discharge "gaps" needing new scraping, when in fact
+    Afterpay is BNPL with no loan to discharge, and MoneyMe's own TMD already
+    stated an explicit no-early-payout-penalty policy that we had already
+    extracted. `rationale` exists so the reasoning is recorded with the verdict
+    rather than living only in a chat log.
+    """
+
+    __tablename__ = "policy_area_coverage"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    lender: Mapped[str] = mapped_column(String, nullable=False)
+    policy_area: Mapped[str] = mapped_column(Enum(*POLICY_AREAS, name="coverage_policy_area"), nullable=False)
+    status: Mapped[str] = mapped_column(Enum(*COVERAGE_STATUSES, name="coverage_status"), nullable=False)
+
+    # Why this verdict was reached -- e.g. which products the lender actually
+    # offers, or which document class was checked. Required: a bare
+    # "not_applicable" with no reasoning is exactly the unfalsifiable claim this
+    # table exists to prevent.
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Evidence for the determination where one exists (4g). Nullable because
+    # "this lender offers no mortgage product" is established from their product
+    # range rather than from a clause in a specific document.
+    source_id: Mapped[int | None] = mapped_column(ForeignKey("sources.id"), nullable=True)
+    source: Mapped["Source"] = relationship(back_populates="policy_area_coverage")
+
+    assessed_on: Mapped[date] = mapped_column(Date, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class RefinanceOffer(Base):
+    """
+    Refinance cashback/promotional offers -- CONTEXT.md section 3's revised category
+    coverage ("refinance-specific offers (cashback, rate discounts) and their
+    conditions").
+
+    Deliberately its own table, separate from BOTH:
+    - `rates`: different shape entirely. A cashback offer isn't an interest rate --
+      it has eligibility gates, a clawback tail, and a hard expiry date that a rate
+      doesn't have. Cramming it into `rates` would mean most columns null for most
+      rows.
+    - `production_rules`: different cadence and different nature. Per 4b's
+      rates/rules split, this is fast-moving promotional data (offers get launched,
+      changed and withdrawn on a scale of weeks), not structural policy that changes
+      1-4x/year. It also carries no confidence/conflict/verification fields for the
+      same reason `rates` doesn't: a published cashback figure is a quoted number,
+      not inferred policy, so the Layer 3 corroboration machinery (9c) doesn't apply.
+
+    What it DOES keep from the rules side: full source citation (4g -- every row
+    traces to a `sources` record) and effective-date versioning (4e -- superseded
+    offers are closed off with effective_to, never overwritten), because
+    "what cashback was this lender advertising on date X" is a real point-in-time
+    question once pillar 4 (execution/routing) exists.
+
+    Note the two different dates, which are NOT the same thing (same distinction as
+    4d's enacted vs commencement dates):
+    - effective_from / effective_to: OUR record of when we observed this offer to be
+      the current one.
+    - offer_expiry_date: the LENDER's own stated expiry. An offer can be past its
+      expiry date while still being our latest record of it (because nobody has
+      re-scraped since) -- which is exactly the stale-data case worth detecting, and
+      it's detectable with no network call at all. See
+      db.query.get_active_refinance_offers().
+    """
+
+    __tablename__ = "refinance_offers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    source_id: Mapped[int] = mapped_column(ForeignKey("sources.id"), nullable=False)
+    source: Mapped["Source"] = relationship(back_populates="refinance_offers")
+
+    lender: Mapped[str] = mapped_column(String, nullable=False)
+    # Entity resolution (4h) -- two brands of the same ADI often run the identical offer.
+    parent_entity: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    offer_name: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # Nullable: not every refinance offer is a cashback -- some are rate discounts or
+    # fee waivers, captured in other_benefits instead.
+    cashback_amount_aud: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # --- Eligibility gates. Real columns for the two that every offer states and
+    # that callers will actually filter/compare on; JSON for the long tail
+    # (owner-occupier only, P&I only, new-to-bank only, broker-channel only, ...).
+    minimum_loan_amount_aud: Mapped[float | None] = mapped_column(Float, nullable=True)
+    maximum_lvr_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    eligibility_conditions: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+    # --- Clawback: the part with real consumer consequences. The period is the
+    # queryable/comparable bit; the rest (amount repayable, trigger events, whether
+    # it's pro-rata) varies enough per lender to belong in JSON.
+    clawback_period_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    clawback_conditions: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+    other_benefits: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+    # The lender's own stated expiry (see class docstring) -- null when the offer is
+    # advertised as ongoing/until-withdrawn rather than with a fixed end date.
+    offer_expiry_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+    # --- Our own versioning (4e) ---
+    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 

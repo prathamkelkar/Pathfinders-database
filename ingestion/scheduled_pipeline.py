@@ -19,6 +19,18 @@ Recommended cadence:
   pinned compilation URL, not discover that a new compilation now exists
   elsewhere -- that's why it also emits a quarterly manual-verification
   reminder, independent of the weekly hash checks.
+- Refinance offers: WEEKLY -- the fast lane 4b prescribes for rates, for a
+  different reason. Offers don't drift continuously the way rates do, but they
+  get launched/withdrawn on a scale of weeks and carry hard expiry cliffs, and
+  a stale offer is actively harmful (routing someone to a cashback that ended).
+  Daily would just be noise on marketing pages. Note the expiry-date check in
+  db.query.get_active_refinance_offers() costs nothing and needs no network
+  access, so it covers the cliff risk between scheduled scrapes.
+
+NOTE on `rates`: the Rate table exists but has no scraper/refresh pipeline yet,
+so nothing in this script refreshes it -- refinance offers are currently the
+only fast-cadence source actually wired up. That's a real gap, not an omission
+by design.
 
 This script never writes to production_rules. Run
 `python3 -m ingestion.review_candidates` manually after a run that logged new
@@ -31,12 +43,22 @@ from pathlib import Path
 
 from db.session import get_session
 from ingestion.change_detection import check_lender_source
+from ingestion.refinance_offers import check_refinance_offer_source
 from ingestion.scrapers import anz, cba, nab, nonbank_lenders, westpac
 from ingestion.scrapers.legislation_frl import check_legislation_targets
 
 LOG_FILE = Path("logs/scraper_pipeline.log")
 
 BIG4_MODULES = [cba, westpac, nab, anz]
+
+# (lender, refinance/cashback offer page URL, parent_entity). DELIBERATELY EMPTY:
+# no lender's refinance-offer page URL has been researched yet, and guessing one
+# and checking whether it 200s is how the wrong Corporations Act URL got into the
+# source inventory earlier. Populate this from a real URL-discovery pass (same
+# process ingestion/source_inventory.md documents for T&Cs) before the weekly
+# refinance-offer cadence does anything useful -- the mechanism below is complete
+# and tested, it just has nothing to check yet.
+REFINANCE_OFFER_SOURCES: list[tuple[str, str, str | None]] = []
 
 
 def _configure_logging() -> None:
@@ -81,6 +103,20 @@ def run_legislation_checks(session) -> list:
     return check_legislation_targets(session)
 
 
+def run_refinance_offer_checks(session, sources: list | None = None) -> list:
+    """
+    Weekly fast-lane check of lender refinance/cashback offer pages. Reuses the
+    same hash-diff mechanism as every other check type -- an unchanged page costs
+    one fetch and writes nothing. `sources` is injectable so this is testable
+    without touching the module-level registry.
+    """
+    sources = REFINANCE_OFFER_SOURCES if sources is None else sources
+    return [
+        check_refinance_offer_source(session, lender=lender, url=url, parent_entity=parent_entity)
+        for lender, url, parent_entity in sources
+    ]
+
+
 def _summarize(results: list) -> None:
     unchanged = [r for r in results if r.status == "unchanged"]
     changed = [r for r in results if r.status in ("new", "changed")]
@@ -100,7 +136,15 @@ def _summarize(results: list) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Check all sources for changes; extract only what changed.")
-    parser.add_argument("--only", choices=["lenders", "legislation", "all"], default="all")
+    parser.add_argument(
+        "--only",
+        choices=["lenders", "legislation", "refinance_offers", "all"],
+        default="all",
+        help="Scope the run. The three source types have different recommended "
+        "cadences (monthly / weekly / weekly) -- see the module docstring -- so "
+        "in practice they should be scheduled as separate cron entries using this "
+        "flag, not all run together on one schedule.",
+    )
     args = parser.parse_args()
 
     _configure_logging()
@@ -111,5 +155,7 @@ if __name__ == "__main__":
         results += run_lender_checks(session)
     if args.only in ("legislation", "all"):
         results += run_legislation_checks(session)
+    if args.only in ("refinance_offers", "all"):
+        results += run_refinance_offer_checks(session)
 
     _summarize(results)
