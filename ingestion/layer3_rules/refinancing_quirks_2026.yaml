@@ -1,0 +1,253 @@
+# Layer 3 intake: undocumented / poorly-documented REFINANCING-AWAY quirks.
+#
+# Scope: actual (not stated) discharge timelines, break-cost practice vs the
+# published formula, and lender-specific hurdles to leaving (retention tactics,
+# notice periods and channel differences not stated in any PDS).
+#
+# Every rule here enters as needs_corroboration (set by layer3_intake.py) and is
+# single_anecdotal_source unless two INDEPENDENT sources actually agree.
+#
+# Two things a reviewer must know before trusting any of this:
+#
+# 1. THE TWO BROKER TIMELINE SOURCES CONTRADICT EACH OTHER. Hunter Galloway and
+#    Home Loan Experts publish different figures for the same lenders -- most
+#    starkly Westpac, at "10 Business Days" vs "3 to 4 weeks". Both are recorded
+#    separately and BOTH stay single_anecdotal_source. Neither corroborates the
+#    other; a reviewer resolving this needs a third source or a direct lender
+#    confirmation. Recording only one would manufacture false confidence.
+#
+# 2. THE ADVISER ARTICLE ON NOTICE PERIODS IS FROM APRIL 2021 (updated March
+#    2022), not 2026. Its CBA "36 business days" claim is four to five years old
+#    and predates the ACCC follow-up work. It is recorded with effective_from set
+#    to its own publication date, NOT today's, so it cannot be mistaken for a
+#    current observation. It needs re-verification before any use.
+
+sources:
+  # ---------------------------------------------------------------- ANZ ------
+  - lender: "ANZ"
+    retrieved_date: "2026-04-20"
+    url: "https://www.theadviser.com.au/broker/48325-brokers-slam-major-s-cash-payments-to-retain-borrowers"
+    source_type: "trade_press"
+    note: >
+      The Adviser, 20 April 2026, "Brokers slam major's cash payments to retain
+      borrowers". Names ANZ specifically and quotes two brokers on the record:
+      Matt Turner ("It really shows that the retention system is flawed, and they
+      will only try when the discharge is lodged") and Daniel Kaminsky ("If a bank
+      comes back with a retention offer this is generally at the end of the
+      refinance application once the discharge is received, which can take between
+      10-15 hours of work to get the file to that point"). Trade press with named
+      attribution is stronger than a brokerage blog, but this is still a single
+      source describing a commercial practice ANZ has not published, so it stays
+      needs_corroboration. The TIMING is the substantive claim -- the offer is
+      withheld until the borrower has already committed to leaving -- and that is
+      what makes it a refinancing hurdle rather than ordinary price competition.
+    rules:
+      - debt_type: "home_loan"
+        rule_description: >
+          ANZ withholds its best retention pricing until a discharge form has been
+          lodged, then approaches the borrower with a cash payment of about $2,000
+          plus a rate roughly 15-20 basis points below the competing offer, and
+          sometimes fee waivers. The offer is not made during earlier repricing
+          conversations.
+        conditions:
+          action: "refinance_away"
+          discharge_form_lodged: true
+        effect:
+          retention_offer_made: true
+          retention_cash_payment_aud_approx: 2000
+          rate_discount_bps_below_competitor_approx: [15, 20]
+          fee_waivers_possible: true
+          offer_withheld_until_discharge_lodged: true
+          refinance_work_already_sunk_hours: [10, 15]
+        confidence: "single_anecdotal_source"
+        effective_from: "2026-04-20"
+
+  # ------------------------------------------------- discharge timelines -----
+  # Source A: Hunter Galloway
+  - lender: "CBA"
+    retrieved_date: "2026-09-19"
+    url: "https://www.huntergalloway.com.au/discharge-forms/"
+    source_type: "broker_content_marketing"
+    note: >
+      Hunter Galloway brokerage discharge-forms guide. States "10-14 Business
+      Days" for CBA, adding "Full discharges are faster (10 days) than partial
+      releases (14 days)". CONFLICTS with Home Loan Experts ("10 to 21 days") --
+      see the file header. The full/partial split is a distinction CBA does not
+      publish and is the more interesting claim.
+    rules:
+      - debt_type: "home_loan"
+        rule_description: >
+          CBA discharge takes 10-14 business days in practice, with full discharges
+          processed faster than partial releases.
+        conditions:
+          action: "discharge"
+          discharge_type: "full"
+        effect:
+          actual_timeline_business_days: 10
+          partial_release_timeline_business_days: 14
+          source_disagreement: "Home Loan Experts states 10-21 days for the same lender"
+        confidence: "single_anecdotal_source"
+
+  - lender: "Westpac"
+    retrieved_date: "2026-09-19"
+    url: "https://www.huntergalloway.com.au/discharge-forms/"
+    source_type: "broker_content_marketing"
+    note: >
+      Hunter Galloway states "10 Business Days" for Westpac, described as a
+      "Strict service level", and adds that "Submitting a digital request via a
+      broker can sometimes shave off 1-2 days". DIRECTLY CONTRADICTED by Home Loan
+      Experts, which states "3 to 4 weeks" -- roughly double. This is the sharpest
+      disagreement in the set and must not be resolved by picking a favourite.
+    rules:
+      - debt_type: "home_loan"
+        rule_description: >
+          Westpac discharge takes about 10 business days, and lodging digitally
+          through a broker can save 1-2 days versus a paper request.
+        conditions:
+          action: "discharge"
+        effect:
+          actual_timeline_business_days: 10
+          digital_broker_lodgement_saves_days: [1, 2]
+          source_disagreement: "Home Loan Experts states 3 to 4 weeks for the same lender"
+        confidence: "single_anecdotal_source"
+
+  - lender: "ANZ"
+    retrieved_date: "2026-09-19"
+    url: "https://www.huntergalloway.com.au/discharge-forms/"
+    source_type: "broker_content_marketing"
+    note: >
+      Hunter Galloway states "15 Business Days" for ANZ and that "ANZ explicitly
+      recommends submitting your request at least 15 days before your settlement
+      date". Home Loan Experts states "a minimum of 10 days" -- overlapping rather
+      than flatly contradictory, but not the same figure.
+    rules:
+      - debt_type: "home_loan"
+        rule_description: >
+          ANZ discharge takes about 15 business days and ANZ advises lodging at
+          least 15 days before settlement.
+        conditions:
+          action: "discharge"
+        effect:
+          actual_timeline_business_days: 15
+          recommended_lodgement_lead_days: 15
+          source_disagreement: "Home Loan Experts states a minimum of 10 days"
+        confidence: "single_anecdotal_source"
+
+  - lender: "NAB"
+    retrieved_date: "2026-09-19"
+    url: "https://www.huntergalloway.com.au/discharge-forms/"
+    source_type: "broker_content_marketing"
+    note: >
+      Hunter Galloway states "10-15 Business Days" for NAB and adds the
+      substantive quirk: "Variable. They prioritize 'Sale' settlements over
+      'Refinance' settlements." That prioritisation is a genuine refinancing-away
+      hurdle, is not stated in any NAB document we hold, and directly
+      disadvantages the refinancing borrower. It is the single most actionable
+      finding in this batch after the ANZ retention timing.
+    rules:
+      - debt_type: "home_loan"
+        rule_description: >
+          NAB discharge takes 10-15 business days and NAB prioritises discharges
+          for property sales ahead of discharges for refinances, so a refinancing
+          borrower waits longer than the headline range implies.
+        conditions:
+          action: "discharge"
+          purpose: "refinance"
+        effect:
+          actual_timeline_business_days_range: [10, 15]
+          sale_settlements_prioritised_over_refinance: true
+          source_disagreement: "Home Loan Experts states 10-21 days for the same lender"
+        confidence: "single_anecdotal_source"
+
+  # Source B: Home Loan Experts -- recorded separately BECAUSE it disagrees.
+  - lender: "Westpac"
+    retrieved_date: "2026-09-19"
+    url: "https://www.homeloanexperts.com.au/home-loan-documents/mortgage-discharge-forms/"
+    source_type: "broker_content_marketing"
+    note: >
+      Home Loan Experts states Westpac discharge takes "3 to 4 weeks" with a $350
+      discharge fee. Recorded as its own candidate precisely because it conflicts
+      with Hunter Galloway's "10 Business Days". A reviewer comparing the two
+      should treat the WIDER estimate as the safer planning assumption, since the
+      cost of under-estimating a discharge timeline (a failed settlement) is far
+      higher than the cost of over-estimating it.
+    rules:
+      - debt_type: "home_loan"
+        rule_description: >
+          Westpac discharge takes 3 to 4 weeks in practice, with a $350 discharge fee.
+        conditions:
+          action: "discharge"
+        effect:
+          actual_timeline_weeks_range: [3, 4]
+          discharge_fee_aud: 350
+          source_disagreement: "Hunter Galloway states 10 business days for the same lender"
+        confidence: "single_anecdotal_source"
+
+  # ------------------------------------------- notice periods / channel ------
+  - lender: "CBA"
+    retrieved_date: "2021-04-23"
+    url: "https://www.theadviser.com.au/broker/41503-excessive-loan-discharge-terms-slammed"
+    source_type: "trade_press"
+    note: >
+      The Adviser, published 23 April 2021 (last updated 9 March 2022) --
+      DELIBERATELY DATED 2021, NOT TODAY. Reports CBA requiring "a minimum of 36
+      business days' notice" to discharge, against an ACCC recommendation of "a
+      maximum time limit of 10 business days", and quotes Cara Giovinazzo of Borro:
+      "Some of these lenders are effectively holding their customers to ransom by
+      increasing the minimum time required to close an account." This is four to
+      five years old and very likely superseded; it is recorded so the claim is
+      traceable and re-checkable, NOT as a current fact. Do not promote without
+      re-verification against a 2026 source.
+    rules:
+      - debt_type: "home_loan"
+        rule_description: >
+          As reported in April 2021, CBA required a minimum of 36 business days'
+          notice from a customer wanting to discharge -- against an ACCC
+          recommendation of a 10 business day maximum. STALE: needs re-verification.
+        conditions:
+          action: "discharge"
+          as_at: "2021-04-23"
+        effect:
+          minimum_notice_business_days: 36
+          accc_recommended_maximum_business_days: 10
+          staleness_warning: "reported 2021, not re-verified for 2026"
+        confidence: "single_anecdotal_source"
+        effective_from: "2021-04-23"
+
+  # ----------------------------------------------------------- Firstmac ------
+  - lender: "Firstmac"
+    retrieved_date: "2026-09-19"
+    url: "https://www.productreview.com.au/listings/firstmac"
+    source_type: "broker_social"
+    note: >
+      Six separate ProductReview customer reviews describing the Firstmac
+      discharge process, spanning roughly two years. Recorded as broker_social
+      (9b.3) -- the WEAKEST evidence category -- because these are unverified
+      consumer posts, individually worthless. What makes them worth recording is
+      the consistency of the failure mode across six independent reviewers:
+      inconsistent information between staff, wrong payout figures, and difficulty
+      obtaining discharge forms at all. Specific reports include a refinance
+      "dragging on for nearly 4 months" requiring a second valuation after the
+      first expired; a payout shortfall quoted wrongly the night before settlement,
+      with a second shortfall appearing after correction; and "$2000" added at
+      discharge without prior notice. Self-selection bias is severe on review
+      sites -- people rarely post about a discharge that went fine -- so this
+      establishes a pattern worth investigating, NOT a rate of occurrence.
+    rules:
+      - debt_type: "home_loan"
+        rule_description: >
+          Firstmac's discharge process is reported by multiple customers as slow
+          and inconsistent: conflicting information between staff, unreliable
+          payout figures issued close to settlement, and difficulty obtaining
+          discharge forms. Refinances reported taking up to four months.
+        conditions:
+          action: "discharge"
+          purpose: "refinance"
+        effect:
+          reported_delays: true
+          longest_reported_refinance_months: 4
+          payout_figure_accuracy_disputed: true
+          inconsistent_information_between_staff: true
+          independent_reviewer_count: 6
+          evidence_quality: "unverified consumer reviews, self-selection bias"
+        confidence: "single_anecdotal_source"

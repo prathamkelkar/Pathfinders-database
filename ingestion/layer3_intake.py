@@ -17,7 +17,7 @@ from pathlib import Path
 import yaml
 from sqlalchemy.orm import Session
 
-from db.models import LAYER3_SOURCE_TYPES, CandidateRule, Source
+from db.models import LAYER3_SOURCE_TYPES, POLICY_AREAS, CandidateRule, Source
 from db.session import get_session
 
 VALID_CONFIDENCE = {"single_anecdotal_source", "corroborated_broker_source"}
@@ -75,9 +75,23 @@ def load_layer3_file(session: Session, path: Path) -> list[CandidateRule]:
                     f"{confidence!r} for lender={lender} debt_type={rule.get('debt_type')}"
                 )
 
+            # policy_area (4b): without this a Layer 3 refinancing rule lands
+            # unclassified and is invisible to query_rule()'s policy_area filter --
+            # which is exactly how the first two promoted discharge rules reached
+            # production_rules with policy_area=None. Optional, because Layer 3 rules
+            # predating the dimension legitimately have none; validated when given so
+            # a typo can't silently write an unqueryable value.
+            policy_area = rule.get("policy_area")
+            if policy_area is not None and policy_area not in POLICY_AREAS:
+                raise ValueError(
+                    f"policy_area must be one of {POLICY_AREAS}, got {policy_area!r} "
+                    f"for lender={lender} debt_type={rule.get('debt_type')}"
+                )
+
             candidate = CandidateRule(
                 lender=lender,
                 debt_type=rule["debt_type"],
+                policy_area=policy_area,
                 description=rule.get("rule_description"),
                 conditions=rule.get("conditions") or {},
                 effect=rule.get("effect") or {},

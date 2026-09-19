@@ -227,3 +227,43 @@ def test_extraction_failed_error_is_distinct_from_empty_result(session, cba_sour
 
     with pytest.raises(ExtractionFailedError):
         extract_candidates(session, cba_source, llm_call=lambda e, t: "garbage")
+
+
+# --- truncated responses ------------------------------------------------------
+# A reply cut off by max_tokens is not a failed extraction -- every object before
+# the cut is complete. Discarding the whole reply loses them, and because
+# temperature is 0 the retries truncate identically, so all three attempts burn on
+# the same failure. Observed on Pepper Money source 15 (69k chars in, >44k out).
+
+
+def test_complete_objects_are_salvaged_from_a_truncated_response(session, cba_source):
+    truncated = (
+        '[\n'
+        '  {"debt_type": "home_loan", "conditions": {"income_type": "overtime"}, '
+        '"effect": {"shading_pct": 80}},\n'
+        '  {"debt_type": "home_loan", "conditions": {"income_type": "bonus"}, "eff'  # cut mid-key
+    )
+
+    created = extract_candidates(session, cba_source, llm_call=lambda e, t: truncated)
+
+    assert len(created) == 1
+    assert created[0].conditions == {"income_type": "overtime"}
+
+
+def test_a_brace_inside_a_quoted_value_does_not_split_an_object(session, cba_source):
+    raw = (
+        '[{"debt_type": "home_loan", "conditions": {}, '
+        '"effect": {"note": "see clause {5.6} of the schedule"}}]'
+    )
+
+    created = extract_candidates(session, cba_source, llm_call=lambda e, t: raw)
+
+    assert len(created) == 1
+    assert created[0].effect["note"] == "see clause {5.6} of the schedule"
+
+
+def test_a_reply_with_no_complete_object_still_fails(session, cba_source):
+    """Salvage must not turn an unusable response into a silent empty success --
+    'nothing extractable' and 'the model failed' have to stay distinguishable."""
+    with pytest.raises(ExtractionFailedError):
+        extract_candidates(session, cba_source, llm_call=lambda e, t: '[ {"debt_type": "home')

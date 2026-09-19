@@ -276,3 +276,185 @@ def test_extracted_candidates_are_committed_not_just_flushed(session, tmp_path):
         assert other.query(CandidateRule).count() == 1
     finally:
         other.close()
+
+
+# --- resume behaviour ---------------------------------------------------------
+# This pass makes slow paid LLM calls over ~27 documents and has already been
+# interrupted once mid-run. Restarting it must neither re-ask the model questions
+# it has answered nor write a second copy of the answers.
+
+
+def _break_cost_llm(entity_name, source_text):
+    return json.dumps(
+        [
+            {
+                "policy_area": "break_cost",
+                "debt_type": "home_loan",
+                "conditions": {"loan_type": "Fixed Rate"},
+                "effect": {"calculation_basis": "swap rate differential"},
+                "effective_from": None,
+                "effective_to": None,
+            }
+        ]
+    )
+
+
+def test_resume_skips_topics_that_already_have_v2_candidates(session):
+    source = make_source(session, BREAK_COST_TEXT)
+    extract_loan_mechanics_from_source(session, source, llm_call=_break_cost_llm)
+
+    def fail_if_called(entity_name, source_text):
+        raise AssertionError("resume must not re-issue an LLM call for an already-extracted topic")
+
+    result = extract_loan_mechanics_from_source(session, source, llm_call=fail_if_called)
+
+    assert result.topics["break_cost"].coverage == "already_extracted"
+
+
+def test_rerunning_does_not_duplicate_candidates(session):
+    source = make_source(session, BREAK_COST_TEXT)
+    extract_loan_mechanics_from_source(session, source, llm_call=_break_cost_llm)
+    before = session.scalars(select(CandidateRule)).all()
+
+    extract_loan_mechanics_from_source(session, source, llm_call=_break_cost_llm)
+
+    after = session.scalars(select(CandidateRule)).all()
+    assert len(after) == len(before) == 1
+
+
+def test_no_resume_still_refuses_to_write_a_duplicate(session):
+    """resume=False re-asks the model, but an identical answer must not land twice."""
+    source = make_source(session, BREAK_COST_TEXT)
+    extract_loan_mechanics_from_source(session, source, llm_call=_break_cost_llm)
+
+    result = extract_loan_mechanics_from_source(
+        session, source, llm_call=_break_cost_llm, resume=False
+    )
+
+    assert result.topics["break_cost"].coverage != "already_extracted"  # it really did re-run
+    assert len(session.scalars(select(CandidateRule)).all()) == 1
+
+
+def test_resume_does_not_skip_a_topic_the_previous_run_never_reached(session):
+    """
+    The Firstmac 51 case: break_cost completed, then the process was killed before
+    discharge. Resuming must still run discharge.
+    """
+    source = make_source(session, BREAK_COST_TEXT + "\n\n" + DISCHARGE_TEXT)
+    extract_loan_mechanics_from_source(
+        session, source, llm_call=_break_cost_llm, topics={"break_cost": ("early repayment adjustment",)}
+    )
+
+    calls = []
+
+    def recording_llm(entity_name, source_text):
+        calls.append(source_text)
+        return json.dumps(
+            [
+                {
+                    "policy_area": "discharge",
+                    "debt_type": "home_loan",
+                    "conditions": {"loan_repaid_in_full": True},
+                    "effect": {"typical_timeline_days": 10},
+                    "effective_from": None,
+                    "effective_to": None,
+                }
+            ]
+        )
+
+    result = extract_loan_mechanics_from_source(session, source, llm_call=recording_llm)
+
+    assert result.topics["break_cost"].coverage == "already_extracted"
+    assert result.topics["discharge"].coverage == "found"
+    assert len(calls) == 1
+
+
+def test_a_genuinely_new_rule_from_the_same_source_is_still_stored(session):
+    """Dedupe must key on the rule payload, not merely on (source, policy_area)."""
+    source = make_source(session, BREAK_COST_TEXT)
+    extract_loan_mechanics_from_source(session, source, llm_call=_break_cost_llm)
+
+    def different_rule_llm(entity_name, source_text):
+        return json.dumps(
+            [
+                {
+                    "policy_area": "break_cost",
+                    "debt_type": "home_loan",
+                    "conditions": {"loan_type": "Variable Rate"},  # differs
+                    "effect": {"calculation_basis": "swap rate differential"},
+                    "effective_from": None,
+                    "effective_to": None,
+                }
+            ]
+        )
+
+    extract_loan_mechanics_from_source(
+        session, source, llm_call=different_rule_llm, resume=False
+    )
+
+    assert len(session.scalars(select(CandidateRule)).all()) == 2
+
+
+# --- vocabulary regression ----------------------------------------------------
+# The keyword list is the single point of failure for the absent/present call: a
+# phrasing that isn't in it produces a CONFIDENT false negative, which is the
+# worst output this pass can give. Afterpay's Pay Monthly terms scanned as absent
+# across 181k chars purely because "early payment" was missing. Every phrasing
+# below is one actually observed in a real lender document, so if someone prunes
+# the vocabulary these fail rather than silently re-opening the hole.
+
+REAL_WORLD_BREAK_COST_PHRASINGS = [
+    # Afterpay Pay Monthly Product Terms cl 5.6 -- the miss that prompted this test
+    "You may make early payments.",
+    "If you repay the full amount outstanding under a Pay Monthly Order",
+    # Wisr personal/car loan pages
+    "Early Repayment Fee: Nil",
+    "no early exit or repayment fees",
+    # MoneyMe AutoPay broker page
+    "With no early exit fees, flexible loan terms",
+    # CBA / Westpac fixed-rate mortgage language
+    "an early repayment adjustment may be payable",
+    "break cost may apply if you repay your fixed rate loan early",
+    # La Trobe / non-bank language
+    "a deferred establishment fee applies",
+]
+
+REAL_WORLD_DISCHARGE_PHRASINGS = [
+    "you must submit a discharge authority",
+    "we will prepare the release of mortgage",
+    "request a payout figure",
+    "the certificate of title will be released",
+]
+
+
+@pytest.mark.parametrize("phrasing", REAL_WORLD_BREAK_COST_PHRASINGS)
+def test_break_cost_vocabulary_catches_real_world_phrasings(phrasing):
+    from ingestion.extraction.extract_loan_mechanics import TOPIC_KEYWORDS
+
+    hits = find_keyword_hits(phrasing, TOPIC_KEYWORDS["break_cost"])
+    assert hits, f"break_cost vocabulary missed a real lender phrasing: {phrasing!r}"
+
+
+@pytest.mark.parametrize("phrasing", REAL_WORLD_DISCHARGE_PHRASINGS)
+def test_discharge_vocabulary_catches_real_world_phrasings(phrasing):
+    from ingestion.extraction.extract_loan_mechanics import TOPIC_KEYWORDS
+
+    hits = find_keyword_hits(phrasing, TOPIC_KEYWORDS["discharge"])
+    assert hits, f"discharge vocabulary missed a real lender phrasing: {phrasing!r}"
+
+
+def test_absent_is_not_reported_as_a_claim_about_the_document():
+    """
+    The runner must not describe an unmatched scan as 'genuinely absent'. That
+    phrasing is what sends someone scraping for a document we already hold, or
+    lets a real policy be recorded as non-existent.
+    """
+    import inspect
+
+    from ingestion.extraction import run_loan_mechanics_pass
+
+    text = inspect.getsource(run_loan_mechanics_pass)
+    # Match the verdict STRING, not any mention of the words -- a comment is
+    # allowed (and does) discuss the old wording when explaining why it was wrong.
+    assert "ABSENT from the sources we hold" not in text
+    assert "NO VOCABULARY MATCHED" in text

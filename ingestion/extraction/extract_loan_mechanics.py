@@ -74,6 +74,23 @@ TOPIC_KEYWORDS: dict[str, tuple[str, ...]] = {
         "early termination fee", "economic cost", "prepayment", "pay out early",
         "repay early", "early exit", "exit fee", "deferred establishment fee",
         "administrative fee", "swap rate",
+        # "early payment"/"early payout" were missing until Afterpay's Pay Monthly
+        # terms were checked by hand: clause 5.6 is headed "Early payments" and uses
+        # that phrase throughout, so the scan returned zero hits across 181k chars of
+        # real terms and would have reported a genuine early-repayment provision as
+        # ABSENT. Exactly the false negative this vocabulary is meant to err against.
+        "early payment", "early payout", "repay the full amount outstanding",
+        # Added by the vocabulary-discovery audit (discover_vocabulary.py), which
+        # asked the model what wording four wrongly-"absent" documents actually
+        # use, and verified every phrase occurs verbatim before accepting it.
+        # These are real Westpac and Zip Co phrasings the hand-written list had no
+        # entry for -- Zip's "there is no fee to payout the balance" is a
+        # substantive exit-cost policy that was being reported as absent.
+        "early termination charge", "no fee to payout", "pay out figure",
+        "payout figure", "pay out your credit contract", "contract out early",
+        "pay out my contract", "repay the total amount you owe",
+        "outstanding balance in full", "pay all the monies owing",
+        "terminate your account", "close your account", "close your loan account",
     ),
     "discharge": (
         "discharge", "release of mortgage", "releasing the mortgage", "payout figure",
@@ -195,19 +212,34 @@ def extract_loan_mechanics_from_source(
     *,
     llm_call=None,
     topics: dict[str, tuple[str, ...]] | None = None,
+    resume: bool = True,
 ) -> SourceResult:
     """
     Run the targeted pass over one already-scraped source. Makes at most one LLM
     call per topic that actually has vocabulary present -- topics with no
     vocabulary are resolved as genuinely "absent" without any call at all.
+
+    With resume=True (the default) any topic that already has version-2
+    candidates stored is skipped without a call, so an interrupted run can be
+    restarted without paying twice or duplicating rows. Pass resume=False to
+    deliberately re-extract.
     """
     topics = topics if topics is not None else TOPIC_KEYWORDS
     llm_call = llm_call or partial(call_llm, system_prompt=SYSTEM_PROMPT_V2)
 
     result = SourceResult(source_id=source.id, lender=source.entity_name, url=source.url)
     text = source.raw_content or ""
+    done = topics_already_extracted(session, source) if resume else set()
 
     for topic, keywords in topics.items():
+        if topic in done:
+            logger.info(
+                "SKIP(resume)  entity=%s source_id=%s topic=%s -- version-2 candidates already stored",
+                source.entity_name, source.id, topic,
+            )
+            result.topics[topic] = TopicResult(topic=topic, coverage="already_extracted")
+            continue
+
         hits = find_keyword_hits(text, keywords)
         if not hits:
             logger.info(
@@ -240,6 +272,20 @@ def extract_loan_mechanics_from_source(
             )
             continue
 
+        # Discard anything that duplicates a candidate an earlier (interrupted) run
+        # already stored -- see _is_duplicate_candidate. Done before the commit so
+        # a twin never reaches disk.
+        duplicates = [c for c in created if _is_duplicate_candidate(session, c)]
+        for dupe in duplicates:
+            session.delete(dupe)
+        if duplicates:
+            session.flush()
+            created = [c for c in created if c not in duplicates]
+            logger.info(
+                "DEDUPED       entity=%s source_id=%s topic=%s -- dropped %d duplicate candidate(s)",
+                source.entity_name, source.id, topic, len(duplicates),
+            )
+
         # Commit per topic, not at the end of the run. extract_candidates() only
         # flushes -- it leaves the commit to its caller -- and this pass makes slow
         # LLM calls across ~20 documents, so a run that dies partway through must
@@ -259,3 +305,66 @@ def extract_loan_mechanics_from_source(
         )
 
     return result
+
+
+def topics_already_extracted(session: Session, source: Source) -> set[str]:
+    """
+    Topics for which this source already has version-2 candidates on disk.
+
+    Resume support. This pass makes slow, paid LLM calls across ~27 documents and
+    has been interrupted once already; re-running it from the top would re-ask the
+    model questions it has already answered AND write a second copy of every
+    candidate it previously produced. Neither the runner nor extract_candidates()
+    deduplicates, so without this the queue silently fills with twins.
+
+    Keyed on the candidate's policy_area rather than on which topic call produced
+    it, because that's the only thing actually recorded. The two can disagree: a
+    break_cost call may emit an item that self-labels as discharge (CBA source 1
+    did exactly that). _is_duplicate_candidate covers the residual risk.
+
+    !! AFTER CHANGING TOPIC_KEYWORDS, RE-RUN WITH resume=False. !!
+    Resume answers "do we already hold candidates for this policy_area", which is
+    a proxy for "has this topic call been made" -- and the proxy fails in exactly
+    the case that matters after a vocabulary change. Westpac sources 4 and 5 and
+    Zip Co 24 and 25 were all silently skipped when the discovered keywords were
+    added, because their DISCHARGE calls had each emitted an item self-labelled
+    break_cost, making it look as though break_cost had already been extracted. It
+    had not: those documents had matched no break_cost vocabulary at all. Resume is
+    a cost optimisation; _is_duplicate_candidate is the correctness guarantee, and
+    it makes a forced re-run safe.
+    """
+    rows = (
+        session.query(CandidateRule.policy_area)
+        .filter(
+            CandidateRule.source_id == source.id,
+            CandidateRule.extraction_prompt_version == LOAN_MECHANICS_PROMPT_VERSION,
+        )
+        .distinct()
+        .all()
+    )
+    return {area for (area,) in rows if area}
+
+
+def _is_duplicate_candidate(session: Session, candidate: CandidateRule) -> bool:
+    """
+    True if an identical version-2 candidate is already stored for this source.
+
+    Safety net behind topics_already_extracted: resume-skipping is keyed on
+    recorded policy_area, which can under-report which topic calls actually ran,
+    so a re-run can still reach the insert path for work already done. Compares
+    the full rule payload -- same source, prompt version, area, debt type,
+    conditions and effect -- since a genuinely new rule will differ in at least
+    one of those.
+    """
+    existing = (
+        session.query(CandidateRule)
+        .filter(
+            CandidateRule.source_id == candidate.source_id,
+            CandidateRule.extraction_prompt_version == LOAN_MECHANICS_PROMPT_VERSION,
+            CandidateRule.id != candidate.id,
+            CandidateRule.policy_area == candidate.policy_area,
+            CandidateRule.debt_type == candidate.debt_type,
+        )
+        .all()
+    )
+    return any(e.conditions == candidate.conditions and e.effect == candidate.effect for e in existing)

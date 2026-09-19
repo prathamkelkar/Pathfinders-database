@@ -264,3 +264,44 @@ def test_real_cba_hecs_intake_file_loads_correctly(session):
     assert buffer_rule.effect["buffer_pct"] == 1.0
     assert all(c.confidence == "corroborated_broker_source" for c in inserted)
     assert all(c.source_tier == "broker_sourced" for c in inserted)
+
+
+def test_policy_area_is_carried_through_from_the_yaml(session, tmp_path):
+    """
+    Without this, a Layer 3 refinancing rule is invisible to query_rule()'s
+    policy_area filter -- the first two promoted discharge rules reached
+    production_rules with policy_area=None for exactly this reason.
+    """
+    path = tmp_path / "r.yaml"
+    path.write_text(
+        "sources:\n"
+        "  - lender: CBA\n"
+        "    note: test\n"
+        "    rules:\n"
+        "      - debt_type: home_loan\n"
+        "        policy_area: discharge\n"
+        "        rule_description: test\n"
+        "        conditions: {action: discharge}\n"
+        "        effect: {days: 10}\n"
+        "        confidence: single_anecdotal_source\n"
+    )
+    inserted = load_layer3_file(session, path)
+    assert inserted[0].policy_area == "discharge"
+
+
+def test_an_unrecognised_policy_area_is_rejected(session, tmp_path):
+    path = tmp_path / "bad.yaml"
+    path.write_text(
+        "sources:\n"
+        "  - lender: CBA\n"
+        "    note: test\n"
+        "    rules:\n"
+        "      - debt_type: home_loan\n"
+        "        policy_area: discharge_typo\n"
+        "        rule_description: test\n"
+        "        conditions: {}\n"
+        "        effect: {}\n"
+        "        confidence: single_anecdotal_source\n"
+    )
+    with pytest.raises(ValueError, match="policy_area must be one of"):
+        load_layer3_file(session, path)

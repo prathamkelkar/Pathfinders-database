@@ -114,18 +114,73 @@ def call_llm(entity_name: str, source_text: str, system_prompt: str | None = Non
             {"role": "system", "content": system_prompt or SYSTEM_PROMPT},
             {"role": "user", "content": f"Entity: {entity_name}\n\nDocument text:\n\n{source_text}"},
         ],
-        max_tokens=16000,
+        # 16000 truncated Pepper Money source 15 (a 69k-char product guide) at about
+        # 44,000 characters of output, mid-object. Salvage below recovers what landed
+        # before the cut, but the rules after it are simply never produced.
+        max_tokens=32000,
         temperature=0,
     )
     return response.choices[0].message.content or ""
 
 
 def _parse_json_array(raw_text: str) -> list[dict]:
+    """
+    Parse the model's JSON array, salvaging complete objects from a truncated reply.
+
+    A response cut off by max_tokens is not a failed extraction: every object BEFORE
+    the cut is complete and well-formed. Discarding the whole reply throws those away
+    and -- because temperature is 0 -- the retries truncate in the same place, so all
+    MAX_EXTRACTION_ATTEMPTS burn on an identical failure. This was observed on Pepper
+    Money source 15, a 69k-char product guide whose output ran past 44,000 characters.
+
+    Salvage is deliberately conservative: it keeps only whole top-level {...} objects
+    and tracks string state, so a brace inside a quoted value can't end an object
+    early. A reply with no complete object at all still raises.
+    """
     start = raw_text.find("[")
-    end = raw_text.rfind("]")
-    if start == -1 or end == -1 or end < start:
+    if start == -1:
         raise ValueError(f"No JSON array found in LLM response: {raw_text[:500]!r}")
-    return json.loads(raw_text[start : end + 1])
+
+    end = raw_text.rfind("]")
+    body = raw_text[start : end + 1] if end > start else raw_text[start:]
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError:
+        pass
+
+    objects, depth, obj_start, in_string, escaped = [], 0, None, False, False
+    for i, ch in enumerate(body):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            if depth == 0:
+                obj_start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and obj_start is not None:
+                try:
+                    objects.append(json.loads(body[obj_start : i + 1]))
+                except json.JSONDecodeError:
+                    pass
+                obj_start = None
+
+    if not objects:
+        raise ValueError(f"No parseable objects in LLM response: {raw_text[:500]!r}")
+    logger.warning(
+        "SALVAGED %d complete object(s) from a truncated extraction response "
+        "(raw length %d chars) -- raise max_tokens if this recurs",
+        len(objects), len(raw_text),
+    )
+    return objects
 
 
 def _parse_date(value) -> date | None:

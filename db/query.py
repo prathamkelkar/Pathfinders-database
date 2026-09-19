@@ -3,6 +3,7 @@ Read-only query interface against `production_rules` (section 7). Deterministic,
 no live fetching, no LLM calls -- just filtering rows already in the database.
 """
 
+import json
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -437,3 +438,184 @@ def get_active_refinance_offers(
     if not include_expired:
         matches = [m for m in matches if not m.is_expired]
     return matches
+
+
+# --- Unified refinancing / switching read path -------------------------------
+# Break-cost and discharge RULES live in production_rules under policy_area (they
+# are rules like any other); refinance OFFERS live in their own fast-cadence table.
+# A caller weighing "should I refinance away from lender X" needs all of it at once,
+# so this assembles the three reads rather than making every caller remember which
+# store holds which piece.
+
+
+@dataclass(frozen=True)
+class CoverageNote:
+    """
+    Why a policy_area has no rules, when we have actually assessed the question.
+
+    This is the piece query_rule() alone cannot give you. Its `found=False` means
+    "no matching row", which conflates three very different answers: the lender has
+    no such concept (Afterpay has no loan to discharge), the lender has one and we
+    haven't found it yet (Wisr writes secured car loans but publishes no release
+    process), and nobody has ever checked. Presenting the first two identically is
+    what sends someone scraping for a document that cannot exist, or lets a real
+    policy be reported as non-existent. `status=None` means never assessed.
+    """
+
+    policy_area: str
+    status: str | None
+    rationale: str | None
+    assessed_on: date | None
+    source: SourceCitation | None
+
+
+@dataclass(frozen=True)
+class RefinancingQueryResult:
+    lender: str
+    as_of: date
+    break_cost_rules: list[RuleMatch] = field(default_factory=list)
+    discharge_rules: list[RuleMatch] = field(default_factory=list)
+    switching_rules: list[RuleMatch] = field(default_factory=list)
+    offers: list[RefinanceOfferMatch] = field(default_factory=list)
+    # Keyed by policy_area. Present for every area asked about, so a caller can
+    # always tell an assessed absence from an unassessed one.
+    coverage: dict[str, CoverageNote] = field(default_factory=dict)
+    conflicting_sources: bool = False
+    # Rolled up from the individual matches so a caller that only glances at the
+    # top level still cannot miss an unverified Layer 3 lead (9c).
+    confidence_warnings: list[str] = field(default_factory=list)
+    message: str = ""
+
+    @property
+    def found(self) -> bool:
+        return bool(self.break_cost_rules or self.discharge_rules or self.switching_rules or self.offers)
+
+
+def _coverage_note(session: Session, lender: str, policy_area: str) -> CoverageNote:
+    from db.models import PolicyAreaCoverage
+
+    row = session.scalars(
+        select(PolicyAreaCoverage).where(
+            PolicyAreaCoverage.lender == lender,
+            PolicyAreaCoverage.policy_area == policy_area,
+        )
+    ).first()
+    if row is None:
+        return CoverageNote(policy_area=policy_area, status=None, rationale=None,
+                            assessed_on=None, source=None)
+    return CoverageNote(
+        policy_area=policy_area,
+        status=row.status,
+        rationale=row.rationale,
+        assessed_on=row.assessed_on,
+        source=_citation(row.source) if row.source is not None else None,
+    )
+
+
+def _refinancing_rules(
+    session: Session, *, lender: str, policy_area: str, as_of: date, debt_type: str | None
+) -> list[RuleMatch]:
+    filters = [
+        ProductionRule.lender == lender,
+        ProductionRule.policy_area == policy_area,
+        ProductionRule.effective_from <= as_of,
+    ]
+    if debt_type is not None:
+        filters.append(ProductionRule.debt_type == debt_type)
+
+    rules = session.scalars(select(ProductionRule).where(*filters)).all()
+    current = [r for r in rules if r.effective_to is None or r.effective_to >= as_of]
+    return [_to_rule_match(r) for r in current]
+
+
+def query_refinancing(
+    session: Session,
+    *,
+    lender: str,
+    debt_type: str | None = None,
+    as_of: date | None = None,
+    include_expired_offers: bool = False,
+) -> RefinancingQueryResult:
+    """
+    Everything the database knows about refinancing away from one lender: break
+    costs, discharge timelines, switching rules and current refinance offers.
+
+    Same guarantees as query_rule() -- reads only production_rules and
+    refinance_offers (never candidate_rules), no network call, no LLM, and every
+    returned item carries its SourceCitation (4g). confidence_warning is set on any
+    rule whose verification_status is "needs_corroboration" (9c) and the warnings
+    are ALSO rolled up into `confidence_warnings`, so a caller reading only the top
+    level of the result cannot miss that an answer rests on an uncorroborated lead.
+
+    Unlike query_rule(), an empty result is explained rather than merely reported:
+    `coverage` carries a CoverageNote per policy_area recording whether the absence
+    was assessed as not_applicable, assessed as applicable-but-not-found, or never
+    assessed at all. Leave `debt_type` None to get every product for the lender.
+    """
+    as_of = as_of or date.today()
+
+    break_cost = _refinancing_rules(session, lender=lender, policy_area="break_cost",
+                                    as_of=as_of, debt_type=debt_type)
+    discharge = _refinancing_rules(session, lender=lender, policy_area="discharge",
+                                   as_of=as_of, debt_type=debt_type)
+    switching = _refinancing_rules(session, lender=lender, policy_area="switching",
+                                   as_of=as_of, debt_type=debt_type)
+    offers = get_active_refinance_offers(session, lender=lender, as_of=as_of,
+                                         include_expired=include_expired_offers)
+
+    coverage = {area: _coverage_note(session, lender, area)
+                for area in ("break_cost", "discharge", "switching")}
+
+    all_rules = [*break_cost, *discharge, *switching]
+    warnings = [m.confidence_warning for m in all_rules if m.confidence_warning is not None]
+    warnings += [o.staleness_warning for o in offers if o.staleness_warning is not None]
+
+    # A disagreement inside ONE policy_area is a conflict; a break-cost rule and a
+    # discharge rule saying different things are not, so this is checked per area
+    # rather than across the merged list. Compared only WITHIN the highest authority
+    # tier present in that area, matching query_rule() -- a broker_sourced rule
+    # disagreeing with a lender_official one is resolved by the hierarchy (4c), not
+    # a conflict to escalate.
+    conflicting = any(r.conflicting_sources for r in all_rules)
+    for group in (break_cost, discharge, switching):
+        if len(group) < 2:
+            continue
+        top_tier = min((m.source.source_tier for m in group), key=lambda t: _SOURCE_TIER_RANK[t])
+        # json.dumps, not tuple(sorted(effect.items())): effect values are routinely
+        # lists and dicts (e.g. {"timeline_business_days_range": [10, 14]}), which are
+        # unhashable, so building a set of raw item tuples raises TypeError on exactly
+        # the refinancing rules this function exists to serve.
+        effects = {
+            json.dumps(m.effect, sort_keys=True, default=str)
+            for m in group
+            if m.source.source_tier == top_tier
+        }
+        if len(effects) > 1:
+            conflicting = True
+
+    if not (break_cost or discharge or switching or offers):
+        assessed = [c for c in coverage.values() if c.status is not None]
+        message = (
+            f"No refinancing data held for lender={lender!r} as of {as_of.isoformat()}. "
+            + (
+                "; ".join(f"{c.policy_area}={c.status}" for c in assessed)
+                if assessed
+                else "No coverage assessment has been recorded for any policy area -- "
+                     "this is 'never checked', NOT 'nothing to find'."
+            )
+        )
+    else:
+        message = "OK"
+
+    return RefinancingQueryResult(
+        lender=lender,
+        as_of=as_of,
+        break_cost_rules=break_cost,
+        discharge_rules=discharge,
+        switching_rules=switching,
+        offers=offers,
+        coverage=coverage,
+        conflicting_sources=conflicting,
+        confidence_warnings=warnings,
+        message=message,
+    )

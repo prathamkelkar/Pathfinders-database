@@ -1,0 +1,107 @@
+# Split replacements for candidates 746 (CBA) and 749 (NAB).
+#
+# Why these were split. The corroboration gate sets verification_status per RULE.
+# Both originals bundled a timeline claim that two independent brokerages agree on
+# with a second claim that only ONE source makes. Marking the bundle "corroborated"
+# would certify the unsupported half -- for NAB that half is "prioritises Sale over
+# Refinance", the most consequential claim in the whole batch and the one a borrower
+# would actually act on. Splitting lets the timeline clear the gate on its evidence
+# while the weaker claim stays visibly unverified.
+#
+# Unit reconciliation behind the corroboration: Hunter Galloway quotes BUSINESS days,
+# Home Loan Experts quotes CALENDAR days. 14 business days is ~20 calendar days, so
+# HG's "10-14 business days" and HLE's "10 to 21 days" for CBA are the same claim in
+# different units, not two different claims. The same conversion does NOT rescue
+# Westpac (HG 10 business days = ~14 calendar vs HLE 3-4 weeks = 21-28 calendar), which
+# is why Westpac stays contradictory.
+
+sources:
+  - lender: "CBA"
+    retrieved_date: "2026-09-19"
+    url: "https://www.huntergalloway.com.au/discharge-forms/"
+    source_type: "broker_content_marketing"
+    note: >
+      Split from candidate 746. TIMELINE ONLY -- the corroborated half. Hunter
+      Galloway "10-14 Business Days"; Home Loan Experts "10 to 21 days". Equivalent
+      once units are converted, from two independent brokerages.
+    rules:
+      - debt_type: "home_loan"
+        rule_description: >
+          CBA discharge takes approximately 10-14 business days (about 10-21
+          calendar days) in practice.
+        conditions:
+          action: "discharge"
+        effect:
+          actual_timeline_business_days_range: [10, 14]
+          equivalent_calendar_days_range: [10, 21]
+        confidence: "corroborated_broker_source"
+
+  - lender: "CBA"
+    retrieved_date: "2026-09-19"
+    url: "https://www.huntergalloway.com.au/discharge-forms/"
+    source_type: "broker_content_marketing"
+    note: >
+      Split from candidate 746. UNCORROBORATED half. Only Hunter Galloway claims
+      the full-vs-partial split; Home Loan Experts does not mention it and CBA does
+      not publish it.
+    rules:
+      - debt_type: "home_loan"
+        rule_description: >
+          CBA processes full discharges faster than partial releases (about 10 days
+          versus about 14 days).
+        conditions:
+          action: "discharge"
+          discharge_type: "partial_release"
+        effect:
+          slower_than_full_discharge: true
+          full_discharge_days: 10
+          partial_release_days: 14
+        confidence: "single_anecdotal_source"
+
+  - lender: "NAB"
+    retrieved_date: "2026-09-19"
+    url: "https://www.huntergalloway.com.au/discharge-forms/"
+    source_type: "broker_content_marketing"
+    note: >
+      Split from candidate 749. TIMELINE ONLY -- the corroborated half. Hunter
+      Galloway "10-15 Business Days"; Home Loan Experts "10 to 21 days"; and NAB's
+      own discharge checklist states "We need at least 10 business days to process a
+      discharge form", which is consistent with both. Note the NAB page means this
+      timeline is NOT undocumented -- it is published by the lender -- so this rule
+      records the practical RANGE rather than a hidden fact.
+    rules:
+      - debt_type: "home_loan"
+        rule_description: >
+          NAB discharge takes approximately 10-15 business days in practice, against
+          a published minimum of 10 business days.
+        conditions:
+          action: "discharge"
+        effect:
+          actual_timeline_business_days_range: [10, 15]
+          lender_published_minimum_business_days: 10
+        confidence: "corroborated_broker_source"
+
+  - lender: "NAB"
+    retrieved_date: "2026-09-19"
+    url: "https://www.huntergalloway.com.au/discharge-forms/"
+    source_type: "broker_content_marketing"
+    note: >
+      Split from candidate 749. UNCORROBORATED half, and the most consequential
+      claim in this batch. Only Hunter Galloway states it. NAB's own discharge
+      checklist was checked directly and gives a single 10-business-day timeframe
+      with NO distinction between sale and refinance settlements, so the lender's
+      own documentation neither confirms nor contradicts it. Must NOT be promoted
+      on one brokerage's say-so.
+    rules:
+      - debt_type: "home_loan"
+        rule_description: >
+          NAB prioritises discharges for property sales ahead of discharges for
+          refinances, so a refinancing borrower may wait longer than the published
+          timeframe implies.
+        conditions:
+          action: "discharge"
+          purpose: "refinance"
+        effect:
+          sale_settlements_prioritised_over_refinance: true
+          lender_documentation_silent_on_this: true
+        confidence: "single_anecdotal_source"
