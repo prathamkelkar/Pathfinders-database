@@ -134,6 +134,15 @@ class Source(Base):
     # underlying document actually changed before re-extracting (4a).
     content_hash: Mapped[str | None] = mapped_column(String, nullable=True)
 
+    # Distribution restriction stated ON the document, where one exists. Several
+    # lenders serve broker-facing credit policy from public, unauthenticated URLs
+    # while stamping it "For broker purposes only" or "CONFIDENTIAL". Robots.txt
+    # permits fetching and the content is the best serviceability evidence
+    # available, but the restriction is a fact about the source and belongs with
+    # its provenance (4g) rather than being silently dropped -- anyone later
+    # deciding whether to quote or redistribute a rule needs to see it.
+    access_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     candidate_rules: Mapped[list["CandidateRule"]] = relationship(back_populates="source")

@@ -20,6 +20,7 @@ import pdfplumber
 from sqlalchemy.orm import Session
 
 from db.models import Source
+from ingestion.jurisdiction import assert_australian
 
 USER_AGENT = "AusDebtPolicyDatabaseBot/0.1 (public policy research project)"
 
@@ -118,6 +119,12 @@ def scrape_documents(
     sources = []
     for url in urls:
         content = fetch(url)
+        # Jurisdiction gate BEFORE the row is built (see ingestion.jurisdiction).
+        # Three lenders we track have NZ arms publishing near-identical documents,
+        # and NZ material has reached this point three times. Raises on a confident
+        # NZ identification; merely warns when uncertain, so short Australian pages
+        # with no markers still ingest.
+        assert_australian(extract_text(content, url), url)
         content_hash = compute_content_hash(content)
         filename = Path(urlparse(url).path).name or f"{content_hash[:16]}.bin"
         dest_path = Path(dest_dir) / filename

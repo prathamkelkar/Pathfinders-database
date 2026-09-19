@@ -11,7 +11,7 @@ import time
 from datetime import date, datetime
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import APIError, OpenAI
 from sqlalchemy.orm import Session
 
 from db.models import POLICY_AREAS, CandidateRule, Source
@@ -26,6 +26,21 @@ EXTRACTION_PROMPT_VERSION = "1"
 # checked manually). MAX_EXTRACTION_ATTEMPTS = 1 initial attempt + 2 retries.
 MAX_EXTRACTION_ATTEMPTS = 3
 RETRY_DELAY_SECONDS = 1.0
+
+# Large documents are extracted in overlapping chunks rather than one call.
+# This is NOT a token-limit workaround -- it is a wall-clock one. NVIDIA's
+# gateway returns 504 after about 300 seconds regardless of our client timeout,
+# and a 69k-char product guide asking for "every explicit rule" cannot finish
+# generating inside that budget. Raising max_tokens made it strictly worse: more
+# output to generate against the same server deadline. The only fix that works is
+# less work per call.
+#
+# 20k is chosen to sit well inside the observed budget: the v2 excerpt pass
+# routinely completed 24k-char inputs in 60-210 seconds.
+MAX_CHUNK_CHARS = 20000
+# Overlap so a rule straddling a boundary is not cut in half. Duplicates created
+# by the overlap are removed after extraction.
+CHUNK_OVERLAP_CHARS = 2000
 
 
 class ExtractionFailedError(RuntimeError):
@@ -94,7 +109,10 @@ actual document you will be given and must not influence what you extract:
 """
 
 
-REQUEST_TIMEOUT_SECONDS = 300.0
+# Must be sized against max_tokens, not chosen independently. At 300s a 69k-char
+# document generating up to 32000 tokens timed out mid-generation on every attempt:
+# raising the token cap without raising this traded a truncation bug for a latency one.
+REQUEST_TIMEOUT_SECONDS = 900.0
 
 
 def _get_client() -> OpenAI:
@@ -114,10 +132,11 @@ def call_llm(entity_name: str, source_text: str, system_prompt: str | None = Non
             {"role": "system", "content": system_prompt or SYSTEM_PROMPT},
             {"role": "user", "content": f"Entity: {entity_name}\n\nDocument text:\n\n{source_text}"},
         ],
-        # 16000 truncated Pepper Money source 15 (a 69k-char product guide) at about
-        # 44,000 characters of output, mid-object. Salvage below recovers what landed
-        # before the cut, but the rules after it are simply never produced.
-        max_tokens=32000,
+        # Sized for ONE CHUNK, not a whole document. 32000 was set when a single
+        # call had to cover an entire 69k-char guide; with chunking, a large cap
+        # only lengthens generation against the gateway's ~300s deadline and
+        # causes 504s. Truncation is still handled by _parse_json_array's salvage.
+        max_tokens=12000,
         temperature=0,
     )
     return response.choices[0].message.content or ""
@@ -189,6 +208,68 @@ def _parse_date(value) -> date | None:
     return datetime.strptime(value, "%Y-%m-%d").date()
 
 
+def _extract_one_chunk(source, chunk: str, llm_call, index: int, total: int) -> list[dict] | None:
+    """
+    One chunk, with the retry policy. Returns parsed items, or None if every
+    attempt failed for this chunk.
+
+    A failed chunk does NOT fail the document: on a 6-chunk guide, losing one
+    chunk to a transient 504 should cost that chunk's rules, not the other five.
+    extract_candidates() raises ExtractionFailedError only if EVERY chunk failed.
+    """
+    last_error: Exception | None = None
+    for attempt in range(1, MAX_EXTRACTION_ATTEMPTS + 1):
+        try:
+            return _parse_json_array(llm_call(source.entity_name, chunk))
+        # APIError covers timeouts, rate limits and 5xx -- the transient failures
+        # retrying exists for. The llm_call was originally outside the try, so a
+        # single read timeout propagated out of extract_candidates and killed a
+        # whole multi-document run.
+        except (ValueError, json.JSONDecodeError, APIError) as e:
+            last_error = e
+            logger.warning(
+                "RETRY attempt=%d/%d entity=%s source_id=%s chunk=%d/%d -- %s: %s",
+                attempt, MAX_EXTRACTION_ATTEMPTS, source.entity_name, source.id,
+                index, total, type(e).__name__, e,
+            )
+            if attempt < MAX_EXTRACTION_ATTEMPTS:
+                # Exponential: an immediate retry after a timeout or rate limit
+                # usually reproduces it.
+                time.sleep(RETRY_DELAY_SECONDS * (2 ** (attempt - 1)))
+
+    logger.error(
+        "CHUNK_FAILED entity=%s source_id=%s chunk=%d/%d -- %s: %s",
+        source.entity_name, source.id, index, total, type(last_error).__name__, last_error,
+    )
+    return None
+
+
+def _chunk_text(text: str, size: int = MAX_CHUNK_CHARS, overlap: int = CHUNK_OVERLAP_CHARS) -> list[str]:
+    """
+    Split into overlapping chunks, preferring a paragraph or sentence boundary so a
+    rule is not severed mid-clause. Returns [text] unchanged when it already fits,
+    so small documents behave exactly as before.
+    """
+    if len(text) <= size:
+        return [text]
+
+    chunks, start = [], 0
+    while start < len(text):
+        end = min(start + size, len(text))
+        if end < len(text):
+            window = text[max(start, end - 1500):end]
+            for sep in ("\n\n", ".\n", ". "):
+                cut = window.rfind(sep)
+                if cut != -1:
+                    end = max(start, end - 1500) + cut + len(sep)
+                    break
+        chunks.append(text[start:end])
+        if end >= len(text):
+            break
+        start = max(start + 1, end - overlap)
+    return chunks
+
+
 def extract_candidates(
     session: Session,
     source: Source,
@@ -230,31 +311,49 @@ def extract_candidates(
 
     source_text = text_override if text_override is not None else source.raw_content
 
-    items = None
-    last_error: Exception | None = None
-    for attempt in range(1, MAX_EXTRACTION_ATTEMPTS + 1):
-        raw_response = llm_call(source.entity_name, source_text)
-        try:
-            items = _parse_json_array(raw_response)
-            break
-        except (ValueError, json.JSONDecodeError) as e:
-            last_error = e
-            logger.warning(
-                "RETRY attempt=%d/%d entity=%s source_id=%s -- unparseable response: %s: %s",
-                attempt, MAX_EXTRACTION_ATTEMPTS, source.entity_name, source.id, type(e).__name__, e,
+    chunks = _chunk_text(source_text)
+    if len(chunks) > 1:
+        logger.info(
+            "CHUNKED entity=%s source_id=%s %d chars -> %d chunks",
+            source.entity_name, source.id, len(source_text), len(chunks),
+        )
+
+    items: list[dict] | None = None
+    for chunk_index, chunk in enumerate(chunks, start=1):
+        chunk_items = _extract_one_chunk(source, chunk, llm_call, chunk_index, len(chunks))
+        if chunk_items is None:
+            continue
+        items = (items or []) + chunk_items
+
+    if items is not None:
+        # Overlap between chunks re-presents the same clauses, so the same rule can
+        # come back twice. Deduped on the full payload, since two genuinely
+        # different rules will differ somewhere in it.
+        seen, deduped = set(), []
+        for item in items:
+            key = json.dumps(item, sort_keys=True, default=str)
+            if key not in seen:
+                seen.add(key)
+                deduped.append(item)
+        if len(deduped) < len(items):
+            logger.info(
+                "CHUNK_DEDUPE entity=%s source_id=%s dropped %d overlap duplicate(s)",
+                source.entity_name, source.id, len(items) - len(deduped),
             )
-            if attempt < MAX_EXTRACTION_ATTEMPTS:
-                time.sleep(RETRY_DELAY_SECONDS)
+        items = deduped
 
     if items is None:
+        # Every chunk failed. Still distinct from a clean empty result: callers
+        # rely on this exception to tell "the document had nothing extractable"
+        # apart from "the model never answered".
         logger.error(
-            "EXTRACTION_FAILED_AFTER_RETRIES entity=%s source_id=%s attempts=%d -- %s: %s",
-            source.entity_name, source.id, MAX_EXTRACTION_ATTEMPTS, type(last_error).__name__, last_error,
+            "EXTRACTION_FAILED_AFTER_RETRIES entity=%s source_id=%s chunks=%d -- all chunks failed",
+            source.entity_name, source.id, len(chunks),
         )
         raise ExtractionFailedError(
-            f"Extraction failed after {MAX_EXTRACTION_ATTEMPTS} attempts for source id={source.id} "
-            f"(entity={source.entity_name!r}): {type(last_error).__name__}: {last_error}"
-        ) from last_error
+            f"Extraction failed for every one of {len(chunks)} chunk(s) of source id={source.id} "
+            f"(entity={source.entity_name!r}) after {MAX_EXTRACTION_ATTEMPTS} attempts each."
+        )
 
     confidence = CONFIDENCE_BY_SOURCE_TIER[source.source_tier]
 

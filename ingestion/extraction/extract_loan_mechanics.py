@@ -168,11 +168,23 @@ class SourceResult:
 
 
 def find_keyword_hits(text: str, keywords: tuple[str, ...]) -> list[tuple[int, str]]:
-    """Case-insensitive positions of every keyword occurrence, in document order."""
-    lowered = text.lower()
+    """
+    Case-insensitive positions of every keyword occurrence, in document order.
+
+    Whitespace between words is matched flexibly (\s+), because 44 of the 46
+    entries in TOPIC_KEYWORDS are multi-word phrases and PDF text extraction
+    routinely inserts a newline mid-phrase. A literal match therefore silently
+    missed real occurrences -- "early repayment\nadjustment" did not match
+    "early repayment adjustment". Measured across the corpus this hid 3 of 10
+    break-cost hits in Westpac source 4 and 3 of 32 in La Trobe source 12.
+
+    Positions are returned against the ORIGINAL text, not a normalised copy, so
+    build_excerpts() can still slice accurate windows around each hit.
+    """
     hits: list[tuple[int, str]] = []
     for kw in keywords:
-        for match in re.finditer(re.escape(kw.lower()), lowered):
+        pattern = r"\s+".join(re.escape(part) for part in kw.lower().split())
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
             hits.append((match.start(), kw))
     return sorted(hits)
 

@@ -267,3 +267,131 @@ def test_a_reply_with_no_complete_object_still_fails(session, cba_source):
     'nothing extractable' and 'the model failed' have to stay distinguishable."""
     with pytest.raises(ExtractionFailedError):
         extract_candidates(session, cba_source, llm_call=lambda e, t: '[ {"debt_type": "home')
+
+
+# --- transient API failures ---------------------------------------------------
+# A read timeout is exactly what retrying is for. The llm_call was originally
+# outside the try block, so one timeout propagated out of extract_candidates and
+# killed an entire multi-document run: the Pepper Money source-15 timeout took the
+# Afterpay and APRA sources with it, untried.
+
+
+def test_a_transient_api_timeout_is_retried_not_fatal(session, cba_source, monkeypatch):
+    from openai import APITimeoutError
+
+    import ingestion.extraction.extract_rules as mod
+    monkeypatch.setattr(mod, "RETRY_DELAY_SECONDS", 0)
+
+    calls = []
+
+    def flaky(entity_name, text):
+        calls.append(1)
+        if len(calls) == 1:
+            raise APITimeoutError(request=None)
+        return '[{"debt_type": "home_loan", "conditions": {}, "effect": {"ok": true}}]'
+
+    created = extract_candidates(session, cba_source, llm_call=flaky)
+
+    assert len(calls) == 2
+    assert len(created) == 1
+
+
+def test_persistent_api_failure_raises_extraction_failed_not_the_raw_error(session, cba_source, monkeypatch):
+    """Callers distinguish 'nothing extractable' from 'the model failed' on this
+    exception type; leaking a transport error breaks that contract."""
+    from openai import APITimeoutError
+
+    import ingestion.extraction.extract_rules as mod
+    monkeypatch.setattr(mod, "RETRY_DELAY_SECONDS", 0)
+
+    def always_times_out(entity_name, text):
+        raise APITimeoutError(request=None)
+
+    with pytest.raises(ExtractionFailedError):
+        extract_candidates(session, cba_source, llm_call=always_times_out)
+
+
+def test_request_timeout_is_sized_above_the_token_budget():
+    """Guards the pairing that broke: max_tokens was raised without the timeout."""
+    import ingestion.extraction.extract_rules as mod
+
+    assert mod.REQUEST_TIMEOUT_SECONDS >= 600, (
+        "REQUEST_TIMEOUT_SECONDS must be sized against max_tokens -- a large "
+        "max_tokens with a short timeout times out mid-generation every attempt."
+    )
+
+
+# --- chunking large documents -------------------------------------------------
+# NVIDIA's gateway returns 504 after ~300s regardless of our client timeout. A
+# 69k-char product guide asking for "every explicit rule" cannot finish inside
+# that budget, and raising max_tokens made it worse. The fix is less work per call.
+
+
+def test_a_small_document_is_not_chunked(session, cba_source):
+    from ingestion.extraction.extract_rules import _chunk_text
+    assert len(_chunk_text("short document")) == 1
+
+
+def test_a_large_document_is_split_into_overlapping_chunks():
+    from ingestion.extraction.extract_rules import MAX_CHUNK_CHARS, _chunk_text
+
+    text = ("Clause about early repayment. " * 3000)
+    chunks = _chunk_text(text)
+
+    assert len(chunks) > 1
+    assert all(len(c) <= MAX_CHUNK_CHARS + 100 for c in chunks)
+    # reassembly must cover the whole document -- no silently dropped tail
+    assert chunks[-1].rstrip().endswith("early repayment.")
+
+
+def test_every_chunk_is_sent_to_the_model(session, cba_source):
+    cba_source.raw_content = "Rule text. " * 6000  # ~66k chars
+    calls = []
+
+    def recording_llm(entity, text):
+        calls.append(text)
+        return '[{"debt_type": "home_loan", "conditions": {}, "effect": {"n": %d}}]' % len(calls)
+
+    created = extract_candidates(session, cba_source, llm_call=recording_llm)
+
+    assert len(calls) > 1
+    assert len(created) == len(calls)
+
+
+def test_overlap_duplicates_are_removed(session, cba_source):
+    """Chunks overlap so a rule spanning a boundary survives; the same rule then
+    comes back twice and must not be stored twice."""
+    cba_source.raw_content = "Rule text. " * 6000
+
+    def same_rule_every_chunk(entity, text):
+        return '[{"debt_type": "home_loan", "conditions": {"a": 1}, "effect": {"b": 2}}]'
+
+    created = extract_candidates(session, cba_source, llm_call=same_rule_every_chunk)
+
+    assert len(created) == 1
+
+
+def test_one_failed_chunk_does_not_lose_the_others(session, cba_source, monkeypatch):
+    import ingestion.extraction.extract_rules as mod
+    monkeypatch.setattr(mod, "RETRY_DELAY_SECONDS", 0)
+    cba_source.raw_content = "Rule text. " * 6000
+    calls = []
+
+    def flaky(entity, text):
+        calls.append(text)
+        if len(calls) <= mod.MAX_EXTRACTION_ATTEMPTS:   # first chunk fails every attempt
+            raise ValueError("unparseable")
+        return '[{"debt_type": "home_loan", "conditions": {}, "effect": {"ok": true}}]'
+
+    created = extract_candidates(session, cba_source, llm_call=flaky)
+
+    assert len(created) >= 1  # later chunks survived the first chunk's failure
+
+
+def test_all_chunks_failing_still_raises(session, cba_source, monkeypatch):
+    import ingestion.extraction.extract_rules as mod
+    monkeypatch.setattr(mod, "RETRY_DELAY_SECONDS", 0)
+    cba_source.raw_content = "Rule text. " * 6000
+
+    with pytest.raises(ExtractionFailedError):
+        extract_candidates(session, cba_source, llm_call=lambda e, t: "no json here")

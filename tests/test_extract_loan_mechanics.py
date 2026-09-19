@@ -458,3 +458,34 @@ def test_absent_is_not_reported_as_a_claim_about_the_document():
     # allowed (and does) discuss the old wording when explaining why it was wrong.
     assert "ABSENT from the sources we hold" not in text
     assert "NO VOCABULARY MATCHED" in text
+
+
+# --- whitespace in extracted PDF text -----------------------------------------
+# 44 of 46 TOPIC_KEYWORDS entries are multi-word, and PDF extraction routinely
+# breaks a line mid-phrase. Literal matching silently missed those occurrences.
+
+
+def test_a_keyword_split_across_a_line_break_is_still_found():
+    hits = find_keyword_hits(
+        "An early repayment\nadjustment may be payable.", ("early repayment adjustment",)
+    )
+    assert len(hits) == 1
+
+
+def test_a_keyword_split_by_multiple_spaces_is_still_found():
+    hits = find_keyword_hits("we prepare the  release   of mortgage", ("release of mortgage",))
+    assert len(hits) == 1
+
+
+def test_hit_positions_still_index_into_the_original_text():
+    """build_excerpts slices the ORIGINAL text, so a normalised-copy fix would
+    return offsets pointing at the wrong place in a long document."""
+    text = "padding padding. An early repayment\nadjustment applies here."
+    hits = find_keyword_hits(text, ("early repayment adjustment",))
+    position, _ = hits[0]
+    assert text[position:position + 17].lower() == "early repayment\nad"[:17]
+
+
+def test_unrelated_text_between_words_does_not_match():
+    """Flexible whitespace must not become flexible content."""
+    assert find_keyword_hits("early repayment of the adjustment", ("early repayment adjustment",)) == []
