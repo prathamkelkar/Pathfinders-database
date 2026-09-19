@@ -1,0 +1,277 @@
+# Layer 3 intake: serviceability policy reconstructed from secondary sources.
+#
+# Produced by five parallel research agents, 19 Sep 2026. Everything here enters
+# as broker_sourced / needs_corroboration -- "potentially inaccurate until
+# verified". Findings that turned out to rest on a LENDER-PUBLISHED document
+# (CBA newsroom, NAB pages, ANZ matrix, Westpac broker PDFs, Macquarie, Bluestone,
+# Bankwest, St.George) are deliberately NOT here: those were scraped as
+# lender_official sources instead.
+#
+# !! THE LOAD-BEARING CAVEAT !!
+# A single brokerage -- Hunter Galloway (huntergalloway.com.au, Brisbane, ACL
+# 389328) -- is the sole source for most lender-specific numbers below. It
+# publishes a dated credit-policy review with per-claim check dates, which puts it
+# at the top of the broker_sourced tier, and one agent raw-verified via curl that
+# the page genuinely contains every string quoted. But as that agent put it: "That
+# verifies the page says it; it does not verify the lender does it." Treat a
+# Hunter Galloway figure as ONE source, however specific it sounds. Where two of
+# these rules share that origin they do NOT corroborate each other.
+
+sources:
+  # ------------------------------------------------------------------ ANZ ----
+  - lender: "ANZ"
+    retrieved_date: "2026-09-11"
+    url: "https://www.huntergalloway.com.au/anz-home-loan-review/"
+    source_type: "broker_content_marketing"
+    note: >
+      Hunter Galloway ANZ review, updated 11 Sep 2026. The page states it "draws on
+      ANZ's Mortgage Credit Requirements dated 17 August 2026" -- a non-public
+      broker document we do not hold. Every ANZ figure below traces to that single
+      unseen document via this one page. Chasing a copy of the ANZ Mortgage Credit
+      Requirements would corroborate or kill four rules at once and is the highest-
+      value next lead for ANZ.
+    rules:
+      - debt_type: "home_loan"
+        policy_area: "serviceability"
+        rule_description: >
+          ANZ assesses an existing credit card as a monthly commitment of 3.8% of
+          the card LIMIT, regardless of the balance owing.
+        conditions: {liability_type: "credit_card"}
+        effect: {monthly_commitment_pct_of_limit: 3.8, assessed_on: "limit_not_balance"}
+        confidence: "single_anecdotal_source"
+      - debt_type: "home_loan"
+        policy_area: "serviceability"
+        rule_description: >
+          ANZ tests repayments at the actual rate plus 3%, subject to a minimum
+          assessment (floor) rate of 5.1%.
+        conditions: {}
+        effect: {buffer_pct: 3.0, floor_rate_pct: 5.1,
+                 note: "the +3% buffer is the APRA industry standard; the 5.1% floor is the ANZ-specific, unpublished part"}
+        confidence: "single_anecdotal_source"
+      - debt_type: "home_loan"
+        policy_area: "serviceability"
+        rule_description: >
+          ANZ counts approximately 90% of long-term rental income, capped at a 7%
+          gross rental yield; short-stay/Airbnb approximately 80% with the same cap.
+          DISPUTED -- see the conflicting 75% rule recorded separately.
+        conditions: {income_type: "rental", letting_type: "long_term"}
+        effect: {rental_income_recognised_pct: 90, gross_yield_cap_pct: 7,
+                 short_stay_recognised_pct: 80,
+                 dispute: "two other sources state 75%; unresolved, do not average"}
+        confidence: "single_anecdotal_source"
+      - debt_type: "home_loan"
+        policy_area: "serviceability"
+        rule_description: >
+          Where ANZ accepts one year of financials on an LMI-insured loan, it may
+          use only 80% of the business profit.
+        conditions: {borrower_type: "self_employed", lmi_applies: true, financials_years: 1}
+        effect: {business_profit_recognised_pct: 80}
+        confidence: "single_anecdotal_source"
+
+  - lender: "ANZ"
+    retrieved_date: "2016-04-01"
+    url: "https://www.theadviser.com.au/lender/34156-anz-tightens-lending-criteria"
+    source_type: "trade_press"
+    note: >
+      The Adviser, 1 Apr 2016, reported identically by Broker Daily 31 Mar 2016.
+      DELIBERATELY DATED 2016 -- ten years old. Recorded because it is the documented
+      ORIGIN of ANZ's 80% overtime figure and of a 75% rental shading that directly
+      contradicts the 90% claim above. Two independent mastheads agreed at the time.
+      Do not present as current without re-verification.
+    rules:
+      - debt_type: "home_loan"
+        policy_area: "serviceability"
+        rule_description: >
+          As at 2016, ANZ shaded overtime and commission income to 80% and rental
+          income to 75% for serviceability.
+        conditions: {income_type: ["overtime", "commission"]}
+        effect: {income_recognised_pct: 80, rental_income_recognised_pct_same_change: 75,
+                 staleness_warning: "reported 2016, not re-verified for 2026"}
+        confidence: "corroborated_broker_source"
+        effective_from: "2016-04-01"
+
+  # ------------------------------------------------------------------ NAB ----
+  - lender: "NAB"
+    retrieved_date: "2026-09-11"
+    url: "https://www.huntergalloway.com.au/nab-home-loan-review/"
+    source_type: "broker_content_marketing"
+    note: >
+      Hunter Galloway NAB review, updated 11 Sep 2026. An agent raw-verified every
+      string below character-for-character against the live page via curl. Roughly
+      half of all NAB-specific numbers we hold come from this ONE page and are
+      independently uncorroborated. The 180-day averaging and the 27 Aug 2026
+      effective date are unusually specific details, which cuts both ways.
+    rules:
+      - debt_type: "home_loan"
+        policy_area: "serviceability"
+        rule_description: >
+          NAB counts a credit card or overdraft as a monthly commitment of 3.8% of
+          the limit, even when nothing is owed.
+        conditions: {liability_type: ["credit_card", "overdraft"]}
+        effect: {monthly_commitment_pct_of_limit: 3.8, assessed_on: "limit_not_balance"}
+        confidence: "single_anecdotal_source"
+      - debt_type: "home_loan"
+        policy_area: "serviceability"
+        rule_description: >
+          NAB tests repayments at the higher of a 5.75% floor rate or the actual
+          rate plus a 3% buffer.
+        conditions: {}
+        effect: {floor_rate_pct: 5.75, buffer_pct: 3.0, applied: "higher_of",
+                 note: "floor is largely inoperative while actual rates sit near 6%"}
+        confidence: "single_anecdotal_source"
+      - debt_type: "home_loan"
+        policy_area: "serviceability"
+        rule_description: >
+          NAB counts 90% of supported rent, and from 27 August 2026 caps the annual
+          rent used at 7% of the property value.
+        conditions: {income_type: "rental"}
+        effect: {rental_income_recognised_pct: 90, gross_yield_cap_pct: 7,
+                 yield_cap_effective_from: "2026-08-27"}
+        confidence: "single_anecdotal_source"
+      - debt_type: "home_loan"
+        policy_area: "serviceability"
+        rule_description: >
+          NAB may count 100% of overtime and allowances for eligible essential-services
+          and health roles: nurses, paramedics, police, firefighters, border security
+          and health professionals. No percentage is published for other occupations.
+        conditions: {income_type: "overtime", occupation_class: "essential_services_or_health"}
+        effect: {income_recognised_pct: 100,
+                 eligible_occupations: ["nurses", "paramedics", "police", "firefighters",
+                                        "border security", "health professionals"],
+                 gap: "shading for NON-eligible occupations is not stated by any source"}
+        confidence: "single_anecdotal_source"
+      - debt_type: "home_loan"
+        policy_area: "serviceability"
+        rule_description: >
+          NAB counts 80% of bonus income, using the LOWER of the two-year average or
+          the most recent year; commission 80% averaged over the latest 180 days,
+          and NAB will not annualise fewer than 6 months of payments.
+        conditions: {income_type: ["bonus", "commission"]}
+        effect: {income_recognised_pct: 80, bonus_basis: "lower of 2-year average or most recent year",
+                 commission_averaging_days: 180, minimum_history_months: 6}
+        confidence: "single_anecdotal_source"
+      - debt_type: "home_loan"
+        policy_area: "serviceability"
+        rule_description: >
+          NAB may use 100% of casual income averaged over the last 180 days, with 6
+          months of payments. Regular allowances and penalty rates are included with
+          casual income; overtime is assessed separately.
+        conditions: {income_type: "casual"}
+        effect: {income_recognised_pct: 100, averaging_days: 180, minimum_history_months: 6}
+        confidence: "single_anecdotal_source"
+
+  # ------------------------------------------------------------------ CBA ----
+  - lender: "CBA"
+    retrieved_date: "2026-09-11"
+    url: "https://www.huntergalloway.com.au/commonwealth-bank-home-loans/"
+    source_type: "broker_content_marketing"
+    note: >
+      Hunter Galloway CBA review, updated 11 Sep 2026, citing its own credit-policy
+      review dated 1 Sep 2026. CBA's HECS policy from this page is NOT recorded here
+      -- CBA publishes that itself and it is held as lender_official (source 73).
+      Only the claims with no CBA-published equivalent appear below.
+    rules:
+      - debt_type: "home_loan"
+        policy_area: "serviceability"
+        rule_description: >
+          CBA starts from 90% of gross rent, then deducts the higher of actual
+          expenses or 10% of rent. A two-step method, not a flat shade.
+        conditions: {income_type: "rental"}
+        effect: {gross_rent_recognised_pct: 90,
+                 expense_deduction: "higher of actual expenses or 10% of rent"}
+        confidence: "single_anecdotal_source"
+      - debt_type: "home_loan"
+        policy_area: "serviceability"
+        rule_description: >
+          CBA may count 100% of overtime for eligible permanent frontline
+          emergency-service or hospital roles. The source describes 80% outside that
+          group as a market norm rather than as a stated CBA rule.
+        conditions: {income_type: "overtime", occupation_class: "frontline_emergency_or_hospital"}
+        effect: {income_recognised_pct: 100,
+                 caveat: "source phrases the 80% non-frontline figure as 'common' in the market, NOT as CBA policy -- do not encode 80% for CBA on this source"}
+        confidence: "single_anecdotal_source"
+      - debt_type: "home_loan"
+        policy_area: "serviceability"
+        rule_description: >
+          CBA may count up to about $120/week of boarder income for an eligible
+          first-home buyer, being 80% of a $150/week cap, for one boarding
+          arrangement, with a statutory declaration. DISPUTED against trade press.
+        conditions: {income_type: "boarder", borrower_type: "first_home_buyer"}
+        effect: {assessable_amount_aud_per_week: 120, cap_aud_per_week: 150,
+                 recognised_pct: 80, max_arrangements: 1,
+                 evidence_required: "statutory declaration",
+                 excluded: ["bridging loans", "applicant already owns an investment property"],
+                 dispute: "Broker Daily 2 Apr 2025 quotes a named CBA executive and states customers can count up to $150/week, with broader owner-occupier eligibility"}
+        confidence: "single_anecdotal_source"
+
+  # -------------------------------------------------------------- Westpac ----
+  - lender: "Westpac"
+    retrieved_date: "2026-09-11"
+    url: "https://www.huntergalloway.com.au/westpac-home-loan-review/"
+    source_type: "broker_content_marketing"
+    note: >
+      Hunter Galloway Westpac review. Westpac's own broker documents (sources 77-80)
+      cover rental shading, emergency-services overtime, casual/evidence rules and
+      self-employed, so only claims ABSENT from those primary documents are recorded
+      here. Notably no Westpac primary document mentions granny flats, bonus shading
+      or HECS at all -- an agent grepped all four for "HECS"/"HELP" and found zero hits.
+    rules:
+      - debt_type: "home_loan"
+        policy_area: "serviceability"
+        rule_description: >
+          Westpac normally uses 90% of gross granny-flat rent -- lower than the 95%
+          it publishes for standard eligible investment property rent.
+        conditions: {income_type: "rental", property_type: "granny_flat"}
+        effect: {rental_income_recognised_pct: 90,
+                 contrast: "Westpac publishes 95% for standard eligible investment rent (source 80)"}
+        confidence: "single_anecdotal_source"
+      - debt_type: "home_loan"
+        policy_area: "serviceability"
+        rule_description: >
+          Westpac can count 80% of an eligible bonus, generally requiring 2 years
+          with the same employer but not 2 years of bonus payments.
+        conditions: {income_type: "bonus"}
+        effect: {income_recognised_pct: 80, employer_tenure_years: 2,
+                 caveat: "80% is the common industry convention, so this source may be restating a market norm rather than Westpac policy; no Westpac primary document states any bonus percentage"}
+        confidence: "single_anecdotal_source"
+
+  - lender: "Westpac"
+    retrieved_date: "2026-08-10"
+    url: "https://www.huntergalloway.com.au/westpacs-new-mortgage-refinancing-policy-a-lifeline-for-homeowners/"
+    source_type: "broker_content_marketing"
+    note: >
+      Reduced-buffer refinance exception. The four eligibility conditions are
+      specific and internally coherent, and major-bank 1% refinance buffer
+      exceptions are independently attested for Westpac/CBA/NAB by Mozo and
+      savings.com.au -- but the precise thresholds rest on this one page.
+    rules:
+      - debt_type: "home_loan"
+        policy_area: "switching"
+        rule_description: >
+          Westpac may apply a reduced 1.0% serviceability buffer instead of the
+          standard 3.0% for eligible like-for-like refinancers, assessed manually.
+        conditions: {action: "refinance", refinance_type: "like_for_like",
+                     credit_score_min: 650, max_lvr_pct: 80,
+                     repayment_history: "clean 12 months, no missed payments or hardship"}
+        effect: {buffer_pct: 1.0, standard_buffer_pct: 3.0, assessment: "manual"}
+        confidence: "single_anecdotal_source"
+
+  # ------------------------------------------------------------- Firstmac ----
+  - lender: "Firstmac"
+    retrieved_date: "2026-09-19"
+    url: "https://www.homeloanexperts.com.au/lender-reviews/firstmac-home-loan-review/"
+    source_type: "broker_content_marketing"
+    note: >
+      Undated third-party lender review; no Firstmac primary source found. Recorded
+      because if true it makes Firstmac unusually generous (100% regardless of
+      occupation, where the majors shade to 80% outside essential services). That
+      is exactly the kind of outlier claim that needs verification before use.
+    rules:
+      - debt_type: "home_loan"
+        policy_area: "serviceability"
+        rule_description: >
+          Firstmac accepts 100% of overtime, bonus, commission and allowances where
+          consistent, with no occupation restriction.
+        conditions: {income_type: ["overtime", "bonus", "commission", "allowances"], consistency_required: true}
+        effect: {income_recognised_pct: 100}
+        confidence: "single_anecdotal_source"
